@@ -188,10 +188,16 @@ export class AudioSystem {
     this.osc2.frequency.setTargetAtTime(targetHz * 2, t, 0.04);
     this.osc3.frequency.setTargetAtTime(targetHz * 0.5, t, 0.04);
 
-    // Chug rhythm tracks the engine — quarter the fundamental gives the putt-putt cadence.
-    this.chugLFO.frequency.setTargetAtTime(targetHz / 4, t, 0.06);
-    // Wobble eases off slightly under throttle (motor smooths out when working hard).
-    this.wobbleDepth.gain.setTargetAtTime(1.8 - this.throttleSmoothed * 0.9, t, 0.1);
+    // Chug rhythm: cylinder firing rate. Idle = pulses you hear as putt-putt;
+    // higher RPM = pitched drone, so the chug AM should fade out — otherwise
+    // it buzzes annoyingly at speed.
+    const chugFreq = targetHz / 4;
+    this.chugLFO.frequency.setTargetAtTime(chugFreq, t, 0.06);
+    const chugFade = 1 - Math.min(1, this.throttleSmoothed * 1.5); // gone above ~67% throttle
+    this.chugDepth.gain.setTargetAtTime(profile.chugDepth * chugFade, t, 0.06);
+    this.chugBias.offset.setTargetAtTime(1 - profile.chugDepth * chugFade, t, 0.06);
+    // Wobble eases off under throttle — motor smooths when working hard.
+    this.wobbleDepth.gain.setTargetAtTime((1.8 - this.throttleSmoothed * 1.4), t, 0.1);
 
     // Engine filter opens up with throttle.
     const cutoff = profile.filterMin + this.throttleSmoothed * (profile.filterMax - profile.filterMin);
@@ -202,18 +208,18 @@ export class AudioSystem {
     const engineGain = 0.10 + this.throttleSmoothed * 0.18;
     this.engineGain.gain.setTargetAtTime(engineGain, t, 0.05);
 
-    // Wind: scales with speed.
-    const windAmt = Math.min(0.18, 0.03 + this.speedSmoothed * 0.012);
-    this.windGain.gain.setTargetAtTime(windAmt, t, 0.1);
-    // Wind filter sharpens slightly at speed.
-    const windCutoff = 380 + this.speedSmoothed * 8;
-    this.windFilter.frequency.setTargetAtTime(windCutoff, t, 0.2);
+    // Wind: atmospheric, much quieter than before. Was the "sand-like noise"
+    // the user complained about. Cap at 0.08 (was 0.18); slow LFO for breathiness.
+    const windAmt = Math.min(0.08, 0.012 + this.speedSmoothed * 0.005);
+    this.windGain.gain.setTargetAtTime(windAmt, t, 0.15);
+    const windCutoff = 320 + this.speedSmoothed * 5;
+    this.windFilter.frequency.setTargetAtTime(windCutoff, t, 0.25);
 
-    // Tire: gated by speed, brighter off-track.
-    const speedFactor = Math.min(1, this.speedSmoothed / 14);
-    const tireAmt = speedFactor * (onTrack ? 0.09 : 0.16);
-    this.tireGain.gain.setTargetAtTime(tireAmt, t, 0.06);
-    this.tireFilter.frequency.setTargetAtTime(onTrack ? 1500 : 2200, t, 0.15);
+    // Tire: subtle, only really audible at speed. Was previously dominant.
+    const speedFactor = Math.min(1, this.speedSmoothed / 18);
+    const tireAmt = speedFactor * speedFactor * (onTrack ? 0.04 : 0.08);
+    this.tireGain.gain.setTargetAtTime(tireAmt, t, 0.08);
+    this.tireFilter.frequency.setTargetAtTime(onTrack ? 1200 : 1900, t, 0.18);
   }
 
   resume() {

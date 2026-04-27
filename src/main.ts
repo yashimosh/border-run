@@ -19,7 +19,7 @@ import {
 import { spawnGoat, spawnBarrel, syncProps, BirdFlock, honk, Prop } from "./props";
 import { SPECS, VehicleKind, buildVehicle, syncVehicleMeshes, Vehicle } from "./vehicle";
 import { AudioSystem } from "./audio";
-import { Radio, DEFAULT_STATIONS } from "./radio";
+import { Radio, DEFAULT_STATIONS, loadStations } from "./radio";
 import { ParticleSystem } from "./particles";
 import { spawnCargo, updateCargo, resetCargo, CargoItem } from "./cargo";
 import { setupFeedback } from "./feedback";
@@ -365,8 +365,13 @@ function init(kind: VehicleKind) {
   const audio = new AudioSystem(kind);
   audio.resume();
 
-  // Radio shares the same audio context.
-  const radio = new Radio(audio.ctx, audio.master, DEFAULT_STATIONS);
+  // Radio shares the same audio context. Stations: any real audio files
+  // dropped in public/radio/ come first, procedural fallbacks behind.
+  let radio = new Radio(audio.ctx, audio.master, DEFAULT_STATIONS);
+  loadStations().then(stations => {
+    // Replace radio with the loaded stations once available.
+    radio = new Radio(audio.ctx, audio.master, stations);
+  });
 
   // Vehicle.
   const spec = SPECS[kind];

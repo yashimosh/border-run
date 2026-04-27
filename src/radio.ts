@@ -14,13 +14,28 @@ export interface RadioStation {
 }
 
 export const DEFAULT_STATIONS: RadioStation[] = [
-  // First station = the fun one. Hijaz mode + daf-like drum, Kurdish/Persian
-  // tonal feel. The other two are still procedural; drop your own MP3s in
-  // public/radio/ and replace `procedural` with `url` to ship real music.
+  // Procedural fallback stations. Real audio files dropped into public/radio/
+  // are auto-discovered via /api/radio-tracks and prepended ahead of these.
   { name: "qandil fm", procedural: "kurdish" },
   { name: "تهران ۱", procedural: "song-mid" },
   { name: "longwave / drift", procedural: "drift" },
 ];
+
+// Fetch auto-discovered audio files from the server and merge them into the
+// station list. Real tracks come first, procedural fallbacks behind.
+export async function loadStations(): Promise<RadioStation[]> {
+  try {
+    const res = await fetch("/api/radio-tracks");
+    if (!res.ok) return DEFAULT_STATIONS;
+    const data = await res.json();
+    const real: RadioStation[] = (data.tracks || []).map((t: { name: string; url: string }) => ({
+      name: t.name, url: t.url,
+    }));
+    return [...real, ...DEFAULT_STATIONS];
+  } catch {
+    return DEFAULT_STATIONS;
+  }
+}
 
 export class Radio {
   private ctx: AudioContext;

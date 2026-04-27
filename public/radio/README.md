@@ -1,30 +1,54 @@
 # Radio tracks
 
-Drop MP3 / OGG / WAV files in this folder, then edit `src/radio.ts` to point stations at them.
+**Drop audio files in this folder. They become radio stations automatically.**
 
-## Why no songs ship by default
+## How it works
 
-Two reasons:
-1. Shipping copyrighted music is illegal.
-2. Shipping CC0 music *I* picked overrides the player's taste.
+The server scans this directory at runtime. Any `*.mp3`, `*.ogg`, `*.wav`, or `*.m4a` file becomes a station. The station name comes from the filename:
 
-So every station defaults to static. The radio works — it just has no signal until you give it one.
+- `karwan-mahmudi.mp3` → "karwan mahmudi"
+- `01-bextiyar-salih.mp3` → "bextiyar salih" (numeric prefix is for sort order, stripped from display)
+- `hozan_dilgesh.mp3` → "hozan dilgesh"
 
-## Add a station
+Files appear in the radio in **filename sort order** — use a `01-`, `02-`, `03-` prefix if you want a specific ordering.
 
-1. Drop `something.mp3` here. Files in `public/` are served at the root, so it'll be available at `/radio/something.mp3`.
-2. Open `src/radio.ts` and edit the `DEFAULT_STATIONS` array:
+## Why no music ships by default
 
-   ```ts
-   { name: "longwave", url: "/radio/something.mp3" },
-   ```
-3. Rebuild + redeploy.
+Two reasons that I want to be explicit about:
+
+1. **Legal.** Shipping copyrighted Kurdish folk music in a public repo gets the repo taken down and exposes the maintainer to liability. "Old" is not the same as "public domain" — recording rights survive composition expiration. archive.org search results often surface unclear-license content.
+2. **Aesthetic.** Whoever forks this should pick their own music, not inherit my taste.
+
+So the radio defaults to procedural synthesized stations (qandil fm, تهران ۱, longwave). They're playable but they're not the same as a real ferqîn or Şivan Perwer recording.
+
+## What to drop in
+
+For Border Run's register (Kurdish smuggler at dawn), things that fit:
+
+- **Hunermendên kurdî** — Şivan Perwer, Ciwan Haco, Diyar, Aynur Doğan, Mahmoud Azizi, Kayhan Kalhor (instrumental)
+- **Field recordings** — daf, zurna, blûr, tanbur instrumentals
+- **Older 78rpm-style** if you can find verifiable PD ones (very rare for Kurdish music)
+- **Ambient drones** that drift in/out of "signal"
+
+For the recording register, **avoid**:
+- Anything triumphant or polished (tips wrong)
+- Modern Kurdish pop with Western beats (loses the period feel)
+- Anthems / political music with overt subject matter (the form is the politics; the music shouldn't restate it)
 
 ## Source ideas (verify license before using)
 
 - [Free Music Archive](https://freemusicarchive.org) — wide selection, filter by license
+- [Internet Archive 78rpm collection](https://archive.org/details/78rpm) — pre-1923 recordings are US public domain
 - [ccMixter](https://ccmixter.org) — CC remixes
 - [Pixabay Music](https://pixabay.com/music/) — royalty-free
-- [archive.org](https://archive.org/details/audio) — public domain + CC
+- Your own recordings or properly-licensed personal collection
 
-For the recording register: low-key folk, period radio recordings, ambient drone, or static-y AM-style transmissions all fit. Anything triumphant or polished tips into the wrong tone.
+## File size guidance
+
+- Keep files under 5MB each so the page doesn't get heavy
+- 192 kbps MP3 or VBR is plenty for a radio-character signal that runs through a lowpass anyway
+- Loop seamlessly if you want continuous play, but the radio also plays once-through and idles silent — both fine
+
+## After adding files
+
+No rebuild needed. The `/api/radio-tracks` endpoint reads the directory live. Just refresh the page.

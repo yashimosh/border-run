@@ -195,6 +195,29 @@ app.post("/api/feedback", async (req, res) => {
 // Health check.
 app.get("/api/health", (req, res) => res.json({ ok: true, resendConfigured: !!resend }));
 
+// Auto-discover radio tracks: any audio file dropped into public/radio/
+// becomes a station automatically. The filename (without extension) is the
+// station name. Underscores → spaces. Numeric prefix "01-" stripped for
+// ordering control without showing up.
+app.get("/api/radio-tracks", async (req, res) => {
+  const dir = path.resolve(__dirname, "dist", "radio");
+  try {
+    const files = await fs.readdir(dir);
+    const audio = files
+      .filter((f) => /\.(mp3|ogg|wav|m4a)$/i.test(f))
+      .sort()
+      .map((f) => {
+        const noExt = f.replace(/\.(mp3|ogg|wav|m4a)$/i, "");
+        const noPrefix = noExt.replace(/^\d+[-_\s]+/, "");
+        const name = noPrefix.replace(/_/g, " ").trim();
+        return { name, url: `/radio/${encodeURIComponent(f)}` };
+      });
+    res.json({ tracks: audio });
+  } catch (err) {
+    res.json({ tracks: [] });
+  }
+});
+
 // Serve the static build.
 const distDir = path.resolve(__dirname, "dist");
 app.use(express.static(distDir, { maxAge: "1h", etag: true }));
