@@ -8,7 +8,7 @@ import { RoomEnvironment } from "three-stdlib";
 import {
   TERRAIN_SIZE, TERRAIN_RES, BORDER_Z,
   buildHeights, buildHeightfieldBody, buildTerrainMesh, sampleHeight,
-  buildSkyGradient, buildWatchtower, buildHut, buildDistantRidges,
+  buildSkyGradient, buildSunDisk, buildWatchtower, buildHut, buildDistantRidges,
   buildRocks, buildScrub, buildBorderPosts, buildBorderLine,
   buildCairn, buildWreck, buildCypress, buildFlagPole,
 } from "./world";
@@ -20,6 +20,8 @@ import { SPECS, VehicleKind, buildVehicle, syncVehicleMeshes, Vehicle } from "./
 import { AudioSystem } from "./audio";
 import { Radio, DEFAULT_STATIONS } from "./radio";
 import { ParticleSystem } from "./particles";
+import { spawnCargo, updateCargo, resetCargo, CargoItem } from "./cargo";
+import { setupFeedback } from "./feedback";
 import { createDevtools } from "./devtools";
 import { createPostFx } from "./postfx";
 import gsap from "gsap";
@@ -63,9 +65,18 @@ function boot() {
 }
 
 if (document.readyState === "loading") {
-  document.addEventListener("DOMContentLoaded", boot);
+  document.addEventListener("DOMContentLoaded", () => { hideLoader(); setupFeedback(); boot(); });
 } else {
+  hideLoader();
+  setupFeedback();
   boot();
+}
+
+function hideLoader() {
+  const loader = document.getElementById("loader");
+  if (!loader) return;
+  loader.classList.add("hide");
+  setTimeout(() => loader.remove(), 600);
 }
 
 function init(kind: VehicleKind) {
@@ -146,6 +157,11 @@ function init(kind: VehicleKind) {
   scene.add(buildRocks(heights, isTrack, 75));
   scene.add(buildScrub(heights, isTrack, 260));
   scene.add(buildDistantRidges());
+
+  // Sun disk low over the +z horizon, slightly east. Quietly catches dawn.
+  const sunDisk = buildSunDisk();
+  sunDisk.position.set(45, 22, 380);
+  scene.add(sunDisk);
 
   // Track helper for landmark placement.
   const trackXLocal = (z: number) => Math.sin(z / TERRAIN_SIZE * 2.4) * 12 + Math.sin(z / TERRAIN_SIZE * 5.7) * 3;
@@ -329,6 +345,9 @@ function init(kind: VehicleKind) {
   scene.add(dust.mesh);
   scene.add(exhaust.mesh);
 
+  // Cargo loop — independent rigid bodies on the truck's platform.
+  const cargo: CargoItem[] = spawnCargo(vehicle, world, scene);
+
   // Contact material: sharper grip on heightfield.
   const wheelGroundContact = new CANNON.ContactMaterial(
     new CANNON.Material(),
@@ -369,6 +388,7 @@ function init(kind: VehicleKind) {
     vehicle.chassisBody.velocity.set(0, 0, 0);
     vehicle.chassisBody.angularVelocity.set(0, 0, 0);
     vehicle.chassisBody.quaternion.set(0, 0, 0, 1);
+    resetCargo(cargo, vehicle);
   }
 
   // Camera follow state. Slightly higher + further so crests don't blind you.
@@ -384,7 +404,7 @@ function init(kind: VehicleKind) {
   const hudLoad = document.getElementById("hud-load")!;
   const hudVehicle = document.getElementById("hud-vehicle");
   if (hudVehicle) hudVehicle.textContent = `${spec.name} — ${spec.year}`;
-  hudLoad.textContent = "—";
+  hudLoad.textContent = `${spec.cargoSlots.length}/${spec.cargoSlots.length}`;
   const eventEl = document.getElementById("event")!;
   let crossed = false;
   let eventTimeout: number | undefined;
@@ -403,10 +423,15 @@ function init(kind: VehicleKind) {
     camera.updateProjectionMatrix();
   });
 
-  // GSAP intro: nudge FOV from 90 → 60 over the first 1.4s for a "settling in" feel.
+  // GSAP intro: FOV 90 → 60 over the first 1.4s for a "settling in" feel.
   camera.fov = 90;
   camera.updateProjectionMatrix();
-  gsap.to(camera, { fov: 60, duration: 1.4, ease: "power2.out", onUpdate: () => camera.updateProjectionMatrix() });
+  let introDone = false;
+  gsap.to(camera, {
+    fov: 60, duration: 1.4, ease: "power2.out",
+    onUpdate: () => camera.updateProjectionMatrix(),
+    onComplete: () => { introDone = true; },
+  });
 
   // Loop.
   const clock = new THREE.Clock();
@@ -512,16 +537,26 @@ function init(kind: VehicleKind) {
     dust.update(dt, camera);
     exhaust.update(dt, camera);
 
+    // Cargo physics — sync, detect lost, update HUD.
+    const cargoStatus = updateCargo(cargo, vehicle);
+    hudLoad.textContent = `${cargoStatus.secured}/${cargoStatus.total}`;
+    if (cargoStatus.justLost) {
+      flash(cargoStatus.justLost.kind === "tarp" ? "load shifted" : "lost a can");
+    }
+
     // Camera follow.
     const desired = vehicle.chassisMesh.localToWorld(camOffsetLocal.clone());
     camera.position.lerp(desired, 1 - Math.pow(0.001, dt));
     camTarget.copy(vehicle.chassisMesh.position).add(new THREE.Vector3(0, 1.5, 0));
 
     // Speed-based FOV: pulls back as you gain speed for the rush.
-    const speedNorm = Math.min(1, planarSpeed / 22);
-    const targetFov = 60 + speedNorm * 12;
-    camera.fov += (targetFov - camera.fov) * Math.min(1, dt * 4);
-    camera.updateProjectionMatrix();
+    // Suppressed until the intro tween finishes so they don't fight.
+    if (introDone) {
+      const speedNorm = Math.min(1, planarSpeed / 22);
+      const targetFov = 60 + speedNorm * 12;
+      camera.fov += (targetFov - camera.fov) * Math.min(1, dt * 4);
+      camera.updateProjectionMatrix();
+    }
 
     // Landing shake — quick, dampened.
     if (camShakeT > 0) {

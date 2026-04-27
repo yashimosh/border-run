@@ -198,6 +198,25 @@ export function sampleHeight(x: number, z: number, heights: number[][]): number 
   return heights[i][j];
 }
 
+// — Sun disk: a faint warm circle low on the +z horizon. Soft outer halo.
+// Reads as the sun not yet over the ridge — supports the dawn register.
+export function buildSunDisk(): THREE.Group {
+  const g = new THREE.Group();
+  const sunMat = new THREE.MeshBasicMaterial({ color: 0xffd9a8, transparent: true, opacity: 0.85, fog: false, depthWrite: false });
+  const haloMat = new THREE.MeshBasicMaterial({ color: 0xf2b988, transparent: true, opacity: 0.22, fog: false, depthWrite: false });
+  const sun = new THREE.Mesh(new THREE.CircleGeometry(8, 32), sunMat);
+  g.add(sun);
+  const halo = new THREE.Mesh(new THREE.CircleGeometry(22, 32), haloMat);
+  halo.position.z = -0.1;
+  g.add(halo);
+  // Outer fainter halo.
+  const halo2Mat = new THREE.MeshBasicMaterial({ color: 0xd9a874, transparent: true, opacity: 0.08, fog: false, depthWrite: false });
+  const halo2 = new THREE.Mesh(new THREE.CircleGeometry(48, 32), halo2Mat);
+  halo2.position.z = -0.2;
+  g.add(halo2);
+  return g;
+}
+
 // — Sky gradient with a soft cloud band. Dawn light below the cloud line.
 export function buildSkyGradient(): THREE.Texture {
   const c = document.createElement("canvas");

@@ -10,17 +10,24 @@ export interface VehicleSpec {
   kind: VehicleKind;
   name: string;
   year: string;
-  // Chassis half-extents for the cannon Box (not the visual mesh).
   chassisHalfExtents: CANNON.Vec3;
   chassisMass: number;
-  // Wheel positions in chassis-local space (y is height of wheel center from chassis center).
   wheelPositions: { x: number; y: number; z: number }[];
   wheelRadius: number;
   engineForce: number;
   brakeForce: number;
   maxSteer: number;
-  // Center-of-mass shift (cannon Body offset of the visual)
   meshOffsetY: number;
+  // Cargo platform (where loose items rest) + slot positions.
+  // Local-space (chassis frame, before meshOffsetY).
+  cargoPlatform: { halfExtents: CANNON.Vec3; offset: CANNON.Vec3 };
+  cargoSlots: CargoSlot[];
+}
+
+export interface CargoSlot {
+  kind: "jerrycan" | "tarp";
+  // Local position above the cargo platform (gravity will settle them).
+  local: { x: number; y: number; z: number };
 }
 
 export const SPECS: Record<VehicleKind, VehicleSpec> = {
@@ -37,10 +44,18 @@ export const SPECS: Record<VehicleKind, VehicleSpec> = {
       { x: -0.85, y: -0.25, z: -1.2 },
     ],
     wheelRadius: 0.4,
-    engineForce: 3200, // snappier
-    brakeForce: 55,
+    engineForce: 3200,
+    brakeForce: 75,
     maxSteer: 0.6,
     meshOffsetY: -0.45,
+    // Cargo on the roof rack: thin platform at y=1.28, on top of the body.
+    cargoPlatform: { halfExtents: new CANNON.Vec3(0.85, 0.05, 1.05), offset: new CANNON.Vec3(0, 1.33, -0.3) },
+    cargoSlots: [
+      { kind: "jerrycan", local: { x: -0.4, y: 1.7, z: 0.3 } },
+      { kind: "jerrycan", local: { x:  0.0, y: 1.7, z: 0.3 } },
+      { kind: "jerrycan", local: { x:  0.4, y: 1.7, z: 0.3 } },
+      { kind: "tarp",     local: { x:  0.0, y: 1.78, z: -0.9 } },
+    ],
   },
   hj75: {
     kind: "hj75",
@@ -56,9 +71,16 @@ export const SPECS: Record<VehicleKind, VehicleSpec> = {
     ],
     wheelRadius: 0.42,
     engineForce: 3800,
-    brakeForce: 65,
+    brakeForce: 90,
     maxSteer: 0.5,
     meshOffsetY: -0.5,
+    // Cargo in the bed: floor + side walls so cargo can't slide out sideways.
+    cargoPlatform: { halfExtents: new CANNON.Vec3(0.85, 0.06, 1.15), offset: new CANNON.Vec3(0, 0.46, -1.3) },
+    cargoSlots: [
+      { kind: "tarp",     local: { x:  0.0, y: 0.85, z: -1.3 } },
+      { kind: "jerrycan", local: { x: -0.55, y: 0.85, z: -0.4 } },
+      { kind: "jerrycan", local: { x:  0.55, y: 0.85, z: -0.4 } },
+    ],
   },
 };
 
@@ -79,6 +101,18 @@ export function buildVehicle(spec: VehicleSpec, world: CANNON.World, spawn: CANN
   const chassisShape = new CANNON.Box(spec.chassisHalfExtents);
   const chassisBody = new CANNON.Body({ mass: spec.chassisMass });
   chassisBody.addShape(chassisShape);
+  // Cargo platform — top of compound shape so loose cargo can rest on it.
+  const platShape = new CANNON.Box(spec.cargoPlatform.halfExtents);
+  chassisBody.addShape(platShape, spec.cargoPlatform.offset);
+  // For HJ75: bed walls so cargo doesn't slide out the sides.
+  if (spec.kind === "hj75") {
+    const wallH = 0.28;
+    const wallShape = new CANNON.Box(new CANNON.Vec3(0.04, wallH, 1.15));
+    chassisBody.addShape(wallShape, new CANNON.Vec3(0.92, 0.46 + wallH + 0.06, -1.3));
+    chassisBody.addShape(wallShape, new CANNON.Vec3(-0.92, 0.46 + wallH + 0.06, -1.3));
+    const backShape = new CANNON.Box(new CANNON.Vec3(0.92, wallH, 0.04));
+    chassisBody.addShape(backShape, new CANNON.Vec3(0, 0.46 + wallH + 0.06, -2.5));
+  }
   chassisBody.position.copy(spawn);
   chassisBody.angularDamping = 0.4;
 

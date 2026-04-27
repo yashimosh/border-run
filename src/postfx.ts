@@ -23,9 +23,9 @@ export function createPostFx(renderer: THREE.WebGLRenderer, scene: THREE.Scene, 
   composer.addPass(new RenderPass(scene, camera));
 
   const bloom = new BloomEffect({
-    intensity: 0.55,
-    luminanceThreshold: 0.62,
-    luminanceSmoothing: 0.18,
+    intensity: 0.45,
+    luminanceThreshold: 0.78, // only bloom the truly bright (emissive lights, sun)
+    luminanceSmoothing: 0.22,
     kernelSize: KernelSize.MEDIUM,
     mipmapBlur: true,
   });

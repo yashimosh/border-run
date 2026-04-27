@@ -49,6 +49,73 @@
       .colophon { position: fixed; bottom: 12px; right: 14px; font-size: 10px; opacity: 0.4; }
       .colophon a { color: inherit; }
 
+      #loader {
+        position: fixed; inset: 0; background: #0b0b0c;
+        display: flex; align-items: center; justify-content: center;
+        flex-direction: column; gap: 18px; z-index: 1000;
+        transition: opacity 500ms ease;
+      }
+      #loader.hide { opacity: 0; pointer-events: none; }
+
+      .fb-btn {
+        position: fixed; bottom: 12px; left: 14px; z-index: 50;
+        font: inherit; font-size: 11px; letter-spacing: 0.08em;
+        background: rgba(11,11,12,0.6); color: rgba(232,230,225,0.7);
+        border: 1px solid rgba(232,230,225,0.18); padding: 6px 10px;
+        cursor: pointer; backdrop-filter: blur(6px);
+        text-transform: uppercase; transition: all 200ms;
+      }
+      .fb-btn:hover { color: #e8e6e1; border-color: rgba(232,230,225,0.5); }
+
+      .fb-modal {
+        position: fixed; inset: 0; background: rgba(11,11,12,0.78);
+        display: none; align-items: center; justify-content: center;
+        z-index: 200; backdrop-filter: blur(2px);
+      }
+      .fb-modal.show { display: flex; }
+      .fb-card {
+        background: #15151a; border: 1px solid rgba(232,230,225,0.15);
+        padding: 28px 26px; max-width: 460px; width: calc(100% - 36px);
+      }
+      .fb-card h2 { font: 500 15px/1.3 ui-monospace, monospace; letter-spacing: 0.03em; margin-bottom: 4px; }
+      .fb-card .sub { font-size: 12px; opacity: 0.55; margin-bottom: 18px; line-height: 1.45; }
+      .fb-card label { display: block; font-size: 10px; opacity: 0.55; letter-spacing: 0.1em; text-transform: uppercase; margin-bottom: 4px; margin-top: 12px; }
+      .fb-card input, .fb-card textarea {
+        width: 100%; background: rgba(232,230,225,0.04); color: #e8e6e1;
+        border: 1px solid rgba(232,230,225,0.15); padding: 8px 10px;
+        font: inherit; font-size: 12px; outline: none;
+        transition: border-color 200ms;
+      }
+      .fb-card input:focus, .fb-card textarea:focus { border-color: rgba(232,230,225,0.55); }
+      .fb-card textarea { min-height: 90px; resize: vertical; font-family: ui-monospace, monospace; }
+      .fb-actions { display: flex; gap: 10px; margin-top: 20px; align-items: center; }
+      .fb-actions button {
+        font: inherit; font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase;
+        background: transparent; color: inherit; border: 1px solid rgba(232,230,225,0.3);
+        padding: 8px 14px; cursor: pointer; transition: all 200ms;
+      }
+      .fb-actions button:hover { border-color: #e8e6e1; }
+      .fb-actions button.primary { border-color: rgba(232,230,225,0.55); }
+      .fb-actions button.primary:hover { background: rgba(232,230,225,0.08); }
+      .fb-actions .spacer { flex: 1; }
+      .fb-toast {
+        position: fixed; bottom: 60px; left: 50%; transform: translateX(-50%);
+        background: rgba(15,15,18,0.95); border: 1px solid rgba(232,230,225,0.25);
+        padding: 8px 14px; font-size: 11px; letter-spacing: 0.05em;
+        opacity: 0; pointer-events: none; transition: opacity 250ms;
+        z-index: 300;
+      }
+      .fb-toast.show { opacity: 1; }
+      #loader .label { font-size: 11px; letter-spacing: 0.16em; opacity: 0.55; text-transform: uppercase; }
+      #loader .bar { width: 180px; height: 1px; background: rgba(232,230,225,0.18); position: relative; overflow: hidden; }
+      #loader .bar::after {
+        content: ""; position: absolute; left: -40%; top: 0; width: 40%; height: 100%;
+        background: rgba(232,230,225,0.7); animation: loaderSlide 1.2s linear infinite;
+      }
+      @keyframes loaderSlide {
+        0% { left: -40%; } 100% { left: 100%; }
+      }
+
       .picker { display: flex; gap: 12px; justify-content: center; margin-bottom: 16px; }
       .picker label {
         cursor: pointer; padding: 12px 14px; min-width: 130px;
@@ -64,6 +131,10 @@
     </style>
   </head>
   <body>
+    <div id="loader">
+      <div class="label">loading</div>
+      <div class="bar"></div>
+    </div>
     <div id="stage"></div>
 
     <div class="hud tl">
@@ -108,7 +179,26 @@
 
     <div id="event">— crossing —</div>
 
-    <div class="colophon">slice v0.1</div>
+    <div class="colophon">slice v0.4</div>
+
+    <button class="fb-btn" id="fb-open">feedback</button>
+    <div class="fb-modal" id="fb-modal">
+      <div class="fb-card">
+        <h2>Tell me what's wrong with it</h2>
+        <p class="sub">Bug, weird feel, suggestion, or just a reaction. Anything goes.</p>
+        <label for="fb-name">Name (optional)</label>
+        <input type="text" id="fb-name" placeholder="anonymous is fine" />
+        <label for="fb-msg">Message</label>
+        <textarea id="fb-msg" placeholder="the steering felt floaty after the canyon section…"></textarea>
+        <div class="fb-actions">
+          <button id="fb-cancel">Cancel</button>
+          <div class="spacer"></div>
+          <button id="fb-copy">Copy</button>
+          <button id="fb-send" class="primary">Send</button>
+        </div>
+      </div>
+    </div>
+    <div class="fb-toast" id="fb-toast">copied to clipboard</div>
 
     <script type="module" src="/src/main.ts"></script>
   </body>

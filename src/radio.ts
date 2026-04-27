@@ -225,6 +225,11 @@ class ProceduralPlayer {
     { bass: 32.70, chord: [261.63, 329.63, 392.00] }, // C
     { bass: 49.00, chord: [196.00, 246.94, 293.66] }, // G
   ];
+  // Occasional substitutions for variation. Same harmonic function, different color.
+  private substitutions = [
+    { bass: 73.42, chord: [293.66, 349.23, 440.00] }, // Dm — substitutes for Am at i/iv
+    { bass: 58.27, chord: [233.08, 277.18, 329.63] }, // Bb — substitutes for F (parallel)
+  ];
 
   constructor(ctx: AudioContext, dest: AudioNode, mode: ProceduralMode) {
     this.ctx = ctx;
@@ -252,7 +257,13 @@ class ProceduralPlayer {
     const t0 = this.ctx.currentTime + 0.05;
 
     const chordIdx = this.barCount % this.progression.length;
-    const chord = this.progression[chordIdx];
+    // Substitute occasionally — every ~8 bars, sometimes a parallel chord
+    // gives the progression air. The AM bandpass disguises the substitution
+    // enough that it reads as "the radio drifted to a different song".
+    const useSub = (this.barCount % 8 === 4) && Math.random() < 0.4;
+    const chord = useSub
+      ? this.substitutions[Math.floor(Math.random() * this.substitutions.length)]
+      : this.progression[chordIdx];
 
     // Bass on beat 1 (and beat 3 in song-mid for momentum).
     this.bassNote(chord.bass, t0, barSec * 0.9);
@@ -261,8 +272,17 @@ class ProceduralPlayer {
     // Pad: triad sustained for the bar.
     for (const hz of chord.chord) this.padNote(hz, t0, barSec);
 
-    // Melody: 1–3 sparse notes per bar from the scale, biased toward the chord tones.
-    const motes = this.mode === "song-mid" ? 3 + Math.floor(Math.random() * 2) : 1 + Math.floor(Math.random() * 2);
+    // Melody density swings: some bars dense, some sparse, occasional rest bar.
+    // Reads as "the radio is breathing" rather than "this is a loop".
+    const densityRoll = Math.random();
+    const restBar = densityRoll < 0.12; // 12% chance of melody silence
+    const denseBar = densityRoll > 0.78 && this.mode === "song-mid";
+    let motes = 0;
+    if (!restBar) {
+      motes = denseBar
+        ? 4 + Math.floor(Math.random() * 2)
+        : (this.mode === "song-mid" ? 2 + Math.floor(Math.random() * 2) : 1 + Math.floor(Math.random() * 2));
+    }
     for (let i = 0; i < motes; i++) {
       const at = t0 + (i / motes) * barSec + (Math.random() - 0.3) * barSec * 0.15;
       // 60% chord tone, 40% scale note.
