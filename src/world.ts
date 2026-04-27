@@ -5,9 +5,9 @@
 import * as THREE from "three";
 import * as CANNON from "cannon-es";
 
-export const TERRAIN_SIZE = 300;
-export const TERRAIN_RES = 96;
-export const BORDER_Z = 50;
+export const TERRAIN_SIZE = 320;
+export const TERRAIN_RES = 128;
+export const BORDER_Z = 60;
 
 // — Authored terrain. North ridge, valley E-W, dirt track curving through.
 // Returns [heights, isTrack] — a parallel grid telling the mesh shader which
@@ -38,6 +38,20 @@ export function buildHeights(): { heights: number[][]; isTrack: boolean[][] } {
     return h;
   };
 
+  // Canyon walls flank the road in a midroute section (z = -20..10).
+  // Outside the track-influence band, terrain rises sharply nearby — limestone walls.
+  const canyonWallHeight = (x: number, z: number) => {
+    if (z < -25 || z > 12) return 0;
+    const tx = trackX(z / TERRAIN_SIZE);
+    const dist = Math.abs(x - tx);
+    // Wall band: 8m..16m from centerline.
+    if (dist < 8 || dist > 16) return 0;
+    const wallFactor = Math.min(1, (dist - 8) / 5) * Math.min(1, (16 - dist) / 4);
+    // Taper at canyon entrance/exit.
+    const lengthFactor = Math.min(1, (z + 25) / 6) * Math.min(1, (12 - z) / 6);
+    return wallFactor * lengthFactor * 9; // up to 9m walls
+  };
+
   for (let i = 0; i < TERRAIN_RES; i++) {
     heights[i] = [];
     isTrack[i] = [];
@@ -46,15 +60,22 @@ export function buildHeights(): { heights: number[][]; isTrack: boolean[][] } {
       const z = (j / (TERRAIN_RES - 1) - 0.5) * TERRAIN_SIZE;
       const zNorm = z / TERRAIN_SIZE;
 
-      // Off-track terrain: ridge to the north, gentle noise, no flat valley anymore.
-      const ridge = Math.max(0, z / TERRAIN_SIZE) * 18;
-      const noise =
-        Math.sin(x * 0.04) * 0.7 +
-        Math.cos(z * 0.05) * 0.6 +
-        Math.sin((x + z) * 0.09) * 0.3 +
-        Math.sin(x * 0.21) * 0.18;
+      // Base terrain. Multi-octave noise — Zagros has more vertical articulation
+      // than a smooth gentle valley; the actual terrain reads "lunar" with crumbly
+      // protrusions. Higher amplitude on long-wavelength bands gives that drama.
+      const ridge = Math.max(0, z / TERRAIN_SIZE) * 22;
+      const longRidge = Math.sin(x * 0.018) * 3.2 + Math.cos(z * 0.022) * 2.4;
+      const midNoise =
+        Math.sin(x * 0.07) * 1.1 +
+        Math.cos(z * 0.08) * 0.9 +
+        Math.sin((x + z) * 0.11) * 0.6;
+      const fineNoise =
+        Math.sin(x * 0.21) * 0.25 +
+        Math.cos(z * 0.27) * 0.2 +
+        Math.sin((x - z) * 0.33) * 0.15;
 
-      let h = ridge + noise;
+      let h = ridge + longRidge + midNoise + fineNoise;
+      h += canyonWallHeight(x, z);
 
       const tx = trackX(zNorm);
       const distToTrack = Math.abs(x - tx);
@@ -62,9 +83,6 @@ export function buildHeights(): { heights: number[][]; isTrack: boolean[][] } {
       const inTrackInfluence = distToTrack < 9.0;
 
       if (inTrackInfluence) {
-        // Closer to centerline → height resolves to the hill-rhythm curve.
-        // The grading still happens (we override the surrounding terrain) but the
-        // target height is a rolling hill, not a flat road.
         const t = Math.max(0, Math.min(1, 1 - distToTrack / 9));
         const targetH = trackY(z);
         h = h * (1 - t * 0.92) + targetH * (t * 0.92);
@@ -94,21 +112,40 @@ export function buildTerrainMesh(heights: number[][], isTrack: boolean[][]): THR
   const pos = geo.attributes.position;
   const colors = new Float32Array(pos.count * 3);
 
+  // Palette tuned to Zagros geology. Limestone where slope is steep (canyon walls,
+  // ridges); sand in low pockets; scrub-olive on the broad mid-elevations; dirt on
+  // the graded track; rut darkest on centerline.
+  const limestone = new THREE.Color(0x9c907a);
+  const limestoneShadow = new THREE.Color(0x6e6657);
+  const sand = new THREE.Color(0xb8a075);
   const scrub = new THREE.Color(0x6e6555);
+  const scrubDry = new THREE.Color(0x837048);
   const dirt = new THREE.Color(0xa68a5b);
-  const rut = new THREE.Color(0x6b5436); // darker, worn ruts down the centerline
+  const rut = new THREE.Color(0x6b5436);
 
-  // Recompute the track centerline x for each z so we can shade the rut.
   const trackXAt = (z: number) => {
     const zNorm = z / TERRAIN_SIZE;
     return Math.sin(zNorm * 2.4) * 12 + Math.sin(zNorm * 5.7) * 3;
+  };
+
+  // Compute slope at (i,j) by sampling neighbors.
+  const slopeAt = (i: number, j: number): number => {
+    const left = heights[Math.max(0, i - 1)][j];
+    const right = heights[Math.min(res - 1, i + 1)][j];
+    const down = heights[i][Math.max(0, j - 1)];
+    const up = heights[i][Math.min(res - 1, j + 1)];
+    const elementSize = TERRAIN_SIZE / (res - 1);
+    const dx = (right - left) / (2 * elementSize);
+    const dz = (up - down) / (2 * elementSize);
+    return Math.hypot(dx, dz);
   };
 
   for (let i = 0; i < res; i++) {
     for (let j = 0; j < res; j++) {
       const idx = j * res + i;
       const jFlipped = res - 1 - j;
-      pos.setY(idx, heights[i][jFlipped]);
+      const h = heights[i][jFlipped];
+      pos.setY(idx, h);
 
       let c: THREE.Color;
       if (isTrack[i][jFlipped]) {
@@ -117,7 +154,23 @@ export function buildTerrainMesh(heights: number[][], isTrack: boolean[][]): THR
         const dist = Math.abs(x - trackXAt(z));
         c = dist < 1.4 ? rut : dirt;
       } else {
-        c = scrub;
+        const slope = slopeAt(i, jFlipped);
+        // Steep → limestone; the steeper, the more shadowed.
+        if (slope > 1.4) {
+          const t = Math.min(1, (slope - 1.4) / 1.5);
+          c = limestone.clone().lerp(limestoneShadow, t);
+        } else if (slope > 0.7) {
+          // Transition: scrub-dry mixing with limestone.
+          const t = (slope - 0.7) / 0.7;
+          c = scrubDry.clone().lerp(limestone, t);
+        } else if (h < -0.4) {
+          // Low pockets — sand.
+          c = sand;
+        } else {
+          // Mid: scrub olive with subtle variation.
+          const variance = ((Math.sin(i * 0.7) + Math.cos(j * 0.9)) * 0.5 + 0.5) * 0.3;
+          c = scrub.clone().lerp(scrubDry, variance);
+        }
       }
       colors[idx * 3] = c.r;
       colors[idx * 3 + 1] = c.g;
@@ -227,26 +280,41 @@ export function buildHut(): THREE.Group {
   return g;
 }
 
-// — Distant ridge silhouette on the +z horizon.
-export function buildDistantRidge(): THREE.Mesh {
-  const w = 800, segments = 100;
-  const geo = new THREE.PlaneGeometry(w, 80, segments, 1);
-  const pos = geo.attributes.position;
-  for (let i = 0; i <= segments; i++) {
-    const t = i / segments;
-    const x = (t - 0.5) * w;
-    const h = 18 + Math.sin(t * 22) * 8 + Math.sin(t * 7.3 + 1.2) * 12 + Math.cos(t * 3.1) * 5;
-    pos.setY(i, h);
-    pos.setY(i + segments + 1, -10);
-    pos.setX(i, x);
-    pos.setX(i + segments + 1, x);
+// — Layered distant ridges. Three ridges at different distances for parallax depth.
+// Closer ridges are warmer + more articulated, farther ones cooler + smoother.
+export function buildDistantRidges(): THREE.Group {
+  const g = new THREE.Group();
+  const layers = [
+    { dist: 200, color: 0x4d5562, height: 22, freqA: 0.08, freqB: 0.025, freqC: 0.011, ampA: 8, ampB: 12, ampC: 5, base: 18 },
+    { dist: 280, color: 0x5d6470, height: 28, freqA: 0.05, freqB: 0.018, freqC: 0.008, ampA: 6, ampB: 14, ampC: 7, base: 22 },
+    { dist: 360, color: 0x787e88, height: 36, freqA: 0.03, freqB: 0.012, freqC: 0.005, ampA: 4, ampB: 10, ampC: 9, base: 28 },
+  ];
+  for (const layer of layers) {
+    const w = layer.dist * 3.0;
+    const segments = 110;
+    const geo = new THREE.PlaneGeometry(w, layer.height + 18, segments, 1);
+    const pos = geo.attributes.position;
+    for (let i = 0; i <= segments; i++) {
+      const t = i / segments;
+      const x = (t - 0.5) * w;
+      const h = layer.base
+        + Math.sin(x * layer.freqA) * layer.ampA
+        + Math.sin(x * layer.freqB + 0.5) * layer.ampB
+        + Math.cos(x * layer.freqC) * layer.ampC;
+      pos.setY(i, h);
+      pos.setY(i + segments + 1, -10);
+      pos.setX(i, x);
+      pos.setX(i + segments + 1, x);
+    }
+    pos.needsUpdate = true;
+    geo.computeVertexNormals();
+    const mat = new THREE.MeshBasicMaterial({ color: layer.color, fog: true });
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.position.z = layer.dist;
+    mesh.rotation.y = Math.PI;
+    g.add(mesh);
   }
-  pos.needsUpdate = true;
-  geo.computeVertexNormals();
-  const mat = new THREE.MeshBasicMaterial({ color: 0x46505c, fog: true });
-  const mesh = new THREE.Mesh(geo, mat);
-  mesh.rotation.y = Math.PI;
-  return mesh;
+  return g;
 }
 
 // — Rocks: instanced low-poly forms scattered off the track.

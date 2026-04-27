@@ -7,10 +7,14 @@ import * as CANNON from "cannon-es";
 import {
   TERRAIN_SIZE, TERRAIN_RES, BORDER_Z,
   buildHeights, buildHeightfieldBody, buildTerrainMesh, sampleHeight,
-  buildSkyGradient, buildWatchtower, buildHut, buildDistantRidge,
+  buildSkyGradient, buildWatchtower, buildHut, buildDistantRidges,
   buildRocks, buildScrub, buildBorderPosts, buildBorderLine,
   buildCairn, buildWreck, buildCypress, buildFlagPole,
 } from "./world";
+import {
+  buildLimestoneSlab, buildPersianOak, buildStoneWall, buildStream,
+  buildVillage, buildGoat, buildPylon, buildPowerLines,
+} from "./scenery";
 import { SPECS, VehicleKind, buildVehicle, syncVehicleMeshes, Vehicle } from "./vehicle";
 import { AudioSystem } from "./audio";
 import { Radio, DEFAULT_STATIONS } from "./radio";
@@ -109,9 +113,109 @@ function init(kind: VehicleKind) {
   scene.add(hut);
 
   // Scatter detail.
-  scene.add(buildRocks(heights, isTrack, 90));
-  scene.add(buildScrub(heights, isTrack, 220));
-  scene.add(buildDistantRidge());
+  scene.add(buildRocks(heights, isTrack, 75));
+  scene.add(buildScrub(heights, isTrack, 260));
+  scene.add(buildDistantRidges());
+
+  // Track helper for landmark placement.
+  const trackXLocal = (z: number) => Math.sin(z / TERRAIN_SIZE * 2.4) * 12 + Math.sin(z / TERRAIN_SIZE * 5.7) * 3;
+
+  // Limestone slabs — clusters at landmarks. Big silhouettes.
+  // Approach to canyon (z=-30 area): two large slabs framing the run-in.
+  for (const [z, side, scale, rot] of [
+    [-32, -1, 1.2, 0.2],
+    [-28, 1, 0.9, -0.4],
+  ] as const) {
+    const slab = buildLimestoneSlab(scale);
+    const sx = trackXLocal(z) + side * (12 + Math.random() * 3);
+    slab.position.set(sx, sampleHeight(sx, z, heights), z);
+    slab.rotation.y = rot;
+    scene.add(slab);
+  }
+  // Border-zone slab cluster — three monocline outcrops north of the line.
+  for (const [z, x, scale, rot] of [
+    [BORDER_Z + 18, -22, 1.5, 0.6],
+    [BORDER_Z + 12, 22, 1.0, -0.3],
+    [BORDER_Z + 26, 6, 0.85, 1.1],
+  ] as const) {
+    const slab = buildLimestoneSlab(scale);
+    slab.position.set(x, sampleHeight(x, z, heights), z);
+    slab.rotation.y = rot;
+    scene.add(slab);
+  }
+
+  // Persian oak grove on the south slope (z = -60, off the road).
+  for (let i = 0; i < 14; i++) {
+    const oak = buildPersianOak();
+    const ox = -32 + Math.random() * 30;
+    const oz = -85 + Math.random() * 30;
+    oak.position.set(ox, sampleHeight(ox, oz, heights), oz);
+    oak.scale.setScalar(0.85 + Math.random() * 0.5);
+    oak.rotation.y = Math.random() * Math.PI * 2;
+    scene.add(oak);
+  }
+  // A pair of single oaks near the wreck — markers.
+  for (const [ox, oz] of [[-46, -32], [-38, -36]] as const) {
+    const oak = buildPersianOak();
+    oak.position.set(ox, sampleHeight(ox, oz, heights), oz);
+    oak.scale.setScalar(1.2);
+    scene.add(oak);
+  }
+
+  // Dry-stone wall ruin — running along the south slope below the oak grove.
+  const wall = buildStoneWall(18);
+  wall.position.set(-30, sampleHeight(-30, -55, heights), -55);
+  wall.rotation.y = -0.3;
+  scene.add(wall);
+  // Shorter terrace wall higher up the slope.
+  const wall2 = buildStoneWall(10);
+  wall2.position.set(-44, sampleHeight(-44, -78, heights), -78);
+  wall2.rotation.y = -0.5;
+  scene.add(wall2);
+
+  // Stream crossing. The track at z = -70 has a small dip; place a stream there.
+  const streamZ = -70;
+  const stream = buildStream(18, 0.2);
+  const streamX = trackXLocal(streamZ);
+  stream.position.set(streamX, sampleHeight(streamX, streamZ, heights) - 0.05, streamZ);
+  stream.rotation.y = Math.PI / 2; // align E-W across track
+  scene.add(stream);
+
+  // Distant village on a ridge to the east.
+  const village = buildVillage();
+  village.position.set(120, sampleHeight(120, -40, heights) + 4, -40);
+  village.rotation.y = -0.4;
+  scene.add(village);
+
+  // Goats grazing on a south-facing slope, off-road.
+  for (let i = 0; i < 6; i++) {
+    const goat = buildGoat();
+    const gx = -55 + Math.random() * 18;
+    const gz = -25 + Math.random() * 12;
+    goat.position.set(gx, sampleHeight(gx, gz, heights), gz);
+    goat.rotation.y = Math.random() * Math.PI * 2;
+    scene.add(goat);
+  }
+
+  // Power line: three pylons marching off the south side, with sagging wires.
+  const pylonPositions = [
+    new THREE.Vector3(-90, 0, -60),
+    new THREE.Vector3(-60, 0, -40),
+    new THREE.Vector3(-30, 0, -20),
+  ];
+  for (const p of pylonPositions) {
+    const pylon = buildPylon();
+    p.y = sampleHeight(p.x, p.z, heights);
+    pylon.position.copy(p);
+    pylon.rotation.y = Math.atan2(p.x - pylonPositions[0].x, p.z - pylonPositions[0].z);
+    scene.add(pylon);
+  }
+  // Wires between consecutive pylons, attaching at the crossbar.
+  for (let i = 0; i < pylonPositions.length - 1; i++) {
+    const a = pylonPositions[i].clone(); a.y += 7;
+    const b = pylonPositions[i + 1].clone(); b.y += 7;
+    scene.add(buildPowerLines(a, b));
+  }
 
   // Cairns along the track — quiet markers that someone has passed before.
   // Track centerline shorthand reused here (sine curve in x as a function of z).
@@ -181,9 +285,11 @@ function init(kind: VehicleKind) {
 
   // Vehicle.
   const spec = SPECS[kind];
-  const spawnX = Math.sin((-0.42) * 2.4) * 12 + Math.sin((-0.42) * 5.7) * 3; // align spawn to track curve at z = -126
-  const spawnY = sampleHeight(spawnX, -120, heights) + 4;
-  const vehicle = buildVehicle(spec, world, new CANNON.Vec3(spawnX, spawnY, -120));
+  // Spawn at the south end of the track, aligned with the track centerline.
+  const spawnZ = -135;
+  const spawnX = Math.sin((spawnZ / TERRAIN_SIZE) * 2.4) * 12 + Math.sin((spawnZ / TERRAIN_SIZE) * 5.7) * 3;
+  const spawnY = sampleHeight(spawnX, spawnZ, heights) + 4;
+  const vehicle = buildVehicle(spec, world, new CANNON.Vec3(spawnX, spawnY, spawnZ));
   scene.add(vehicle.chassisMesh);
   for (const w of vehicle.wheelMeshes) scene.add(w);
 
@@ -229,7 +335,7 @@ function init(kind: VehicleKind) {
   window.addEventListener("keyup", setKey(false));
 
   function resetVehicle() {
-    vehicle.chassisBody.position.set(spawnX, spawnY, -120);
+    vehicle.chassisBody.position.set(spawnX, spawnY, spawnZ);
     vehicle.chassisBody.velocity.set(0, 0, 0);
     vehicle.chassisBody.angularVelocity.set(0, 0, 0);
     vehicle.chassisBody.quaternion.set(0, 0, 0, 1);

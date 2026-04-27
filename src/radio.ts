@@ -3,19 +3,20 @@
 // I picked would override your taste. Drop your own MP3s in public/radio/
 // and list them in DEFAULT_STATIONS below.
 
+export type ProceduralMode = "drift" | "song-slow" | "song-mid";
+
 export interface RadioStation {
   name: string;
   url?: string;        // relative path, e.g. "/radio/track1.mp3"
-  procedural?: boolean; // if true, generate synth instead of playing a file
+  procedural?: ProceduralMode; // if set, generate synth instead of playing a file
 }
 
 export const DEFAULT_STATIONS: RadioStation[] = [
-  // First station ships working out of the box: a procedurally generated
-  // shortwave-drift drone. No licensing, no taste-imposition. Honest fit.
-  { name: "longwave / dawn drift", procedural: true },
-  // The rest are placeholders — drop files in public/radio/ and add urls here.
-  { name: "qandil fm", url: undefined },
-  { name: "تهران ۱", url: undefined },
+  // Three working procedural stations. Drop MP3s in public/radio/ and replace
+  // the procedural fields with url fields when you have music to ship.
+  { name: "longwave / dawn drift", procedural: "song-slow" },
+  { name: "qandil fm", procedural: "song-mid" },
+  { name: "تهران ۱", procedural: "drift" },
 ];
 
 export class Radio {
@@ -101,7 +102,7 @@ export class Radio {
     this.currentIdx = i;
     const s = this.stations[i];
     if (s.procedural) {
-      this.procedural = new ProceduralPlayer(this.ctx, this.filter);
+      this.procedural = new ProceduralPlayer(this.ctx, this.filter, s.procedural);
       this.procedural.start();
       this.updateHud();
       this.flashTuneIndicator();
@@ -183,7 +184,6 @@ export class Radio {
 // AM-character bandpass, so it gets the same dusty-radio treatment.
 class ProceduralPlayer {
   private ctx: AudioContext;
-  private dest: AudioNode;
   private out: GainNode;
   private droneOscs: OscillatorNode[] = [];
   private droneLFO: OscillatorNode | null = null;
@@ -191,23 +191,176 @@ class ProceduralPlayer {
   private padFilter: BiquadFilterNode | null = null;
   private padLFO: OscillatorNode | null = null;
   private pluckTimer: number | null = null;
+  private barTimer: number | null = null;
   private alive = false;
+  private mode: ProceduralMode;
+  private barCount = 0;
 
-  // A pentatonic minor in two octaves. Hz values.
-  private notes = [
-    110.00, 130.81, 146.83, 164.81, 196.00,         // A2 C3 D3 E3 G3
-    220.00, 261.63, 293.66, 329.63, 392.00, 440.00, // A3 C4 D4 E4 G4 A4
+  // A natural minor scale (Hz, two octaves).
+  private scale = [
+    110.00, 123.47, 130.81, 146.83, 164.81, 174.61, 196.00, // A2..G3
+    220.00, 246.94, 261.63, 293.66, 329.63, 349.23, 392.00, 440.00,
   ];
 
-  constructor(ctx: AudioContext, dest: AudioNode) {
+  // 4-chord progression in A minor: i - VI - III - VII (Am - F - C - G).
+  // Each entry: [bass Hz, triad Hz × 3].
+  private progression = [
+    { bass: 55.00, chord: [220.00, 261.63, 329.63] }, // Am
+    { bass: 43.65, chord: [174.61, 220.00, 261.63] }, // F
+    { bass: 32.70, chord: [261.63, 329.63, 392.00] }, // C
+    { bass: 49.00, chord: [196.00, 246.94, 293.66] }, // G
+  ];
+
+  constructor(ctx: AudioContext, dest: AudioNode, mode: ProceduralMode) {
     this.ctx = ctx;
-    this.dest = dest;
+    this.mode = mode;
     this.out = ctx.createGain();
     this.out.gain.value = 0;
     this.out.connect(dest);
   }
 
   start() {
+    if (this.mode === "drift") this.startDrift();
+    else this.startSong();
+  }
+
+  private startSong() {
+    this.alive = true;
+    this.out.gain.setTargetAtTime(0.85, this.ctx.currentTime, 0.6);
+    this.scheduleNextBar();
+  }
+
+  private scheduleNextBar() {
+    if (!this.alive) return;
+    const bpm = this.mode === "song-slow" ? 64 : 92;
+    const barSec = (60 / bpm) * 4; // 4 beats per bar
+    const t0 = this.ctx.currentTime + 0.05;
+
+    const chordIdx = this.barCount % this.progression.length;
+    const chord = this.progression[chordIdx];
+
+    // Bass on beat 1 (and beat 3 in song-mid for momentum).
+    this.bassNote(chord.bass, t0, barSec * 0.9);
+    if (this.mode === "song-mid") this.bassNote(chord.bass, t0 + barSec * 0.5, barSec * 0.45);
+
+    // Pad: triad sustained for the bar.
+    for (const hz of chord.chord) this.padNote(hz, t0, barSec);
+
+    // Melody: 1–3 sparse notes per bar from the scale, biased toward the chord tones.
+    const motes = this.mode === "song-mid" ? 3 + Math.floor(Math.random() * 2) : 1 + Math.floor(Math.random() * 2);
+    for (let i = 0; i < motes; i++) {
+      const at = t0 + (i / motes) * barSec + (Math.random() - 0.3) * barSec * 0.15;
+      // 60% chord tone, 40% scale note.
+      const hz = Math.random() < 0.6
+        ? chord.chord[Math.floor(Math.random() * chord.chord.length)] * (Math.random() < 0.4 ? 2 : 1)
+        : this.scale[7 + Math.floor(Math.random() * 7)];
+      this.melodyNote(hz, at);
+    }
+
+    // Drums in song-mid only — soft kick on 1 and 3, hat on every beat.
+    if (this.mode === "song-mid") {
+      const beat = barSec / 4;
+      this.kick(t0);
+      this.kick(t0 + beat * 2);
+      for (let b = 0; b < 4; b++) this.hat(t0 + beat * b + beat * 0.5);
+    }
+
+    this.barCount++;
+    this.barTimer = window.setTimeout(() => this.scheduleNextBar(), barSec * 1000 - 30);
+  }
+
+  private bassNote(hz: number, t: number, dur: number) {
+    const osc = this.ctx.createOscillator();
+    osc.type = "sawtooth";
+    osc.frequency.value = hz;
+    const filt = this.ctx.createBiquadFilter();
+    filt.type = "lowpass";
+    filt.frequency.value = 320;
+    filt.Q.value = 0.4;
+    const env = this.ctx.createGain();
+    env.gain.setValueAtTime(0, t);
+    env.gain.linearRampToValueAtTime(0.18, t + 0.02);
+    env.gain.setValueAtTime(0.18, t + dur * 0.6);
+    env.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    osc.connect(filt).connect(env).connect(this.out);
+    osc.start(t);
+    osc.stop(t + dur + 0.05);
+  }
+
+  private padNote(hz: number, t: number, dur: number) {
+    const osc = this.ctx.createOscillator();
+    osc.type = "triangle";
+    osc.frequency.value = hz;
+    osc.detune.value = (Math.random() - 0.5) * 8; // slight chorus
+    const filt = this.ctx.createBiquadFilter();
+    filt.type = "lowpass";
+    filt.frequency.value = 1200;
+    filt.Q.value = 0.5;
+    const env = this.ctx.createGain();
+    env.gain.setValueAtTime(0, t);
+    env.gain.linearRampToValueAtTime(0.06, t + 0.4);
+    env.gain.setValueAtTime(0.06, t + dur - 0.4);
+    env.gain.linearRampToValueAtTime(0.0001, t + dur);
+    osc.connect(filt).connect(env).connect(this.out);
+    osc.start(t);
+    osc.stop(t + dur + 0.05);
+  }
+
+  private melodyNote(hz: number, t: number) {
+    const osc = this.ctx.createOscillator();
+    osc.type = "triangle";
+    osc.frequency.value = hz;
+    const filt = this.ctx.createBiquadFilter();
+    filt.type = "lowpass";
+    filt.frequency.setValueAtTime(2400, t);
+    filt.frequency.exponentialRampToValueAtTime(700, t + 0.6);
+    const env = this.ctx.createGain();
+    env.gain.setValueAtTime(0, t);
+    env.gain.linearRampToValueAtTime(0.13, t + 0.012);
+    env.gain.exponentialRampToValueAtTime(0.0001, t + 0.7);
+    osc.connect(filt).connect(env).connect(this.out);
+    osc.start(t);
+    osc.stop(t + 0.85);
+  }
+
+  private kick(t: number) {
+    const osc = this.ctx.createOscillator();
+    osc.type = "sine";
+    osc.frequency.setValueAtTime(120, t);
+    osc.frequency.exponentialRampToValueAtTime(40, t + 0.18);
+    const env = this.ctx.createGain();
+    env.gain.setValueAtTime(0, t);
+    env.gain.linearRampToValueAtTime(0.32, t + 0.005);
+    env.gain.exponentialRampToValueAtTime(0.0001, t + 0.22);
+    osc.connect(env).connect(this.out);
+    osc.start(t);
+    osc.stop(t + 0.25);
+  }
+
+  private hat(t: number) {
+    const buf = this.ctx.createBufferSource();
+    buf.buffer = this.makeShortNoise();
+    const filt = this.ctx.createBiquadFilter();
+    filt.type = "highpass";
+    filt.frequency.value = 4000;
+    const env = this.ctx.createGain();
+    env.gain.setValueAtTime(0, t);
+    env.gain.linearRampToValueAtTime(0.045, t + 0.002);
+    env.gain.exponentialRampToValueAtTime(0.0001, t + 0.06);
+    buf.connect(filt).connect(env).connect(this.out);
+    buf.start(t);
+    buf.stop(t + 0.1);
+  }
+
+  private makeShortNoise(): AudioBuffer {
+    const len = Math.floor(this.ctx.sampleRate * 0.1);
+    const b = this.ctx.createBuffer(1, len, this.ctx.sampleRate);
+    const d = b.getChannelData(0);
+    for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
+    return b;
+  }
+
+  private startDrift() {
     this.alive = true;
     const ctx = this.ctx;
     const t = ctx.currentTime;
@@ -279,9 +432,9 @@ class ProceduralPlayer {
       let stepDelay = 0;
       let lastIdx = 4 + Math.floor(Math.random() * 5);
       for (let i = 0; i < phraseLen; i++) {
-        const stepIdx = Math.max(0, Math.min(this.notes.length - 1, lastIdx + (Math.floor(Math.random() * 5) - 2)));
+        const stepIdx = Math.max(0, Math.min(this.scale.length - 1, lastIdx + (Math.floor(Math.random() * 5) - 2)));
         lastIdx = stepIdx;
-        const noteHz = this.notes[stepIdx];
+        const noteHz = this.scale[stepIdx];
         this.pluck(noteHz, stepDelay);
         stepDelay += 0.35 + Math.random() * 0.3;
       }
@@ -314,10 +467,8 @@ class ProceduralPlayer {
     this.alive = false;
     const t = this.ctx.currentTime;
     this.out.gain.setTargetAtTime(0, t, 0.15);
-    if (this.pluckTimer !== null) {
-      clearTimeout(this.pluckTimer);
-      this.pluckTimer = null;
-    }
+    if (this.pluckTimer !== null) { clearTimeout(this.pluckTimer); this.pluckTimer = null; }
+    if (this.barTimer !== null) { clearTimeout(this.barTimer); this.barTimer = null; }
     // Stop everything after a short fade.
     setTimeout(() => {
       try { this.droneLFO?.stop(); } catch {}
