@@ -5,7 +5,7 @@
 
 import * as Tone from "tone";
 
-export type ProceduralMode = "drift" | "song-slow" | "song-mid";
+export type ProceduralMode = "drift" | "song-slow" | "song-mid" | "kurdish";
 
 export interface RadioStation {
   name: string;
@@ -14,17 +14,19 @@ export interface RadioStation {
 }
 
 export const DEFAULT_STATIONS: RadioStation[] = [
-  // Three working procedural stations. Drop MP3s in public/radio/ and replace
-  // the procedural fields with url fields when you have music to ship.
-  { name: "longwave / dawn drift", procedural: "song-slow" },
-  { name: "qandil fm", procedural: "song-mid" },
-  { name: "تهران ۱", procedural: "drift" },
+  // First station = the fun one. Hijaz mode + daf-like drum, Kurdish/Persian
+  // tonal feel. The other two are still procedural; drop your own MP3s in
+  // public/radio/ and replace `procedural` with `url` to ship real music.
+  { name: "qandil fm", procedural: "kurdish" },
+  { name: "تهران ۱", procedural: "song-mid" },
+  { name: "longwave / drift", procedural: "drift" },
 ];
 
 export class Radio {
   private ctx: AudioContext;
   private master: GainNode;
-  private filter: BiquadFilterNode;
+  private filter: BiquadFilterNode;     // first stage: lowpass (treble cut)
+  private filter2: BiquadFilterNode;    // second stage: highpass (bass trim)
   private outGain: GainNode;
   private staticBuf: AudioBufferSourceNode | null = null;
   private staticGain: GainNode;
@@ -33,7 +35,7 @@ export class Radio {
   private procedural: ProceduralPlayer | null = null;
   private stations: RadioStation[];
   private currentIdx = -1;
-  private volume = 0.55;
+  private volume = 0.95;
   private hudEl: HTMLElement | null;
 
   constructor(ctx: AudioContext, master: GainNode, stations: RadioStation[]) {
@@ -42,14 +44,19 @@ export class Radio {
     this.stations = stations;
     this.hudEl = document.getElementById("hud-radio");
 
-    // AM-radio character: bandpass, slightly resonant.
+    // Gentler "old radio" character: lowpass at 5kHz + highpass at 180Hz.
+    // Keeps the mid-range full-strength so music doesn't sound choked.
     this.filter = ctx.createBiquadFilter();
-    this.filter.type = "bandpass";
-    this.filter.frequency.value = 1600;
-    this.filter.Q.value = 0.55;
+    this.filter.type = "lowpass";
+    this.filter.frequency.value = 5000;
+    this.filter.Q.value = 0.7;
+    this.filter2 = ctx.createBiquadFilter();
+    this.filter2.type = "highpass";
+    this.filter2.frequency.value = 180;
+    this.filter2.Q.value = 0.6;
     this.outGain = ctx.createGain();
     this.outGain.gain.value = this.volume;
-    this.filter.connect(this.outGain).connect(master);
+    this.filter.connect(this.filter2).connect(this.outGain).connect(master);
 
     this.staticGain = ctx.createGain();
     this.staticGain.gain.value = 0;
@@ -241,18 +248,19 @@ class ProceduralPlayer {
 
   start() {
     if (this.mode === "drift") this.startDrift();
+    else if (this.mode === "kurdish") this.startKurdish();
     else this.startSong();
   }
 
   private startSong() {
     this.alive = true;
-    this.out.gain.setTargetAtTime(0.85, this.ctx.currentTime, 0.6);
+    this.out.gain.setTargetAtTime(1.1, this.ctx.currentTime, 0.6);
     this.scheduleNextBar();
   }
 
   private scheduleNextBar() {
     if (!this.alive) return;
-    const bpm = this.mode === "song-slow" ? 64 : 92;
+    const bpm = this.mode === "song-slow" ? 80 : 108;
     const barSec = (60 / bpm) * 4; // 4 beats per bar
     const t0 = this.ctx.currentTime + 0.05;
 
@@ -393,6 +401,103 @@ class ProceduralPlayer {
     const d = b.getChannelData(0);
     for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
     return b;
+  }
+
+  // — Kurdish-feel station: D Hijaz mode (D Eb F# G A Bb C D), 108 bpm,
+  // open-fifth drone bass, daf-like frame-drum kick + shaker, melodic line
+  // that exploits the augmented-second leap (Eb→F#) which is the signature
+  // of Persian/Kurdish/Arab tonality.
+  private hijaz = [
+    73.42, 77.78, 92.50, 98.00, 110.00, 116.54, 130.81, // D2 Eb2 F#2 G2 A2 Bb2 C3
+    146.83, 155.56, 185.00, 196.00, 220.00, 233.08, 261.63, 293.66, // D3..D4
+  ];
+
+  private startKurdish() {
+    this.alive = true;
+    this.out.gain.setTargetAtTime(1.15, this.ctx.currentTime, 0.6);
+    // Continuous drone: D + A open fifth, sustained low.
+    const bassFilter = this.ctx.createBiquadFilter();
+    bassFilter.type = "lowpass";
+    bassFilter.frequency.value = 320;
+    const bassGain = this.ctx.createGain();
+    bassGain.gain.value = 0.18;
+    bassFilter.connect(bassGain).connect(this.out);
+    for (const hz of [73.42, 110.00]) {
+      const o = this.ctx.createOscillator();
+      o.type = "sawtooth";
+      o.frequency.value = hz;
+      const g = this.ctx.createGain();
+      g.gain.value = 0.6;
+      o.connect(g).connect(bassFilter);
+      o.start();
+      this.droneOscs.push(o);
+    }
+    this.scheduleNextKurdishBar();
+  }
+
+  private scheduleNextKurdishBar() {
+    if (!this.alive) return;
+    const bpm = 108;
+    const barSec = (60 / bpm) * 4;
+    const t0 = this.ctx.currentTime + 0.05;
+    const beat = barSec / 4;
+
+    // Daf-like rhythm: kick on 1 + 3, soft hat off-beats, occasional 16th roll.
+    this.kick(t0);
+    this.kick(t0 + beat * 2);
+    for (let b = 0; b < 4; b++) {
+      this.hat(t0 + beat * b + beat * 0.5);
+    }
+    // Occasional flourish: 4 fast 16th hat hits in beat 4.
+    if (Math.random() < 0.35) {
+      for (let s = 0; s < 4; s++) this.hat(t0 + beat * 3 + s * (beat / 4));
+    }
+
+    // Melody: 4-7 notes per bar from Hijaz, biased to use the Eb→F# leap.
+    const noteCount = 4 + Math.floor(Math.random() * 4);
+    let lastIdx = 6 + Math.floor(Math.random() * 5); // mid octave start
+    for (let i = 0; i < noteCount; i++) {
+      const at = t0 + (i / noteCount) * barSec + (Math.random() - 0.4) * (barSec * 0.06);
+      // Stepwise motion mostly; occasional aug-2 leap.
+      let stepIdx;
+      if (Math.random() < 0.18) {
+        // Force the Hijaz leap: jump from Eb (idx 1 / 8) to F# (idx 2 / 9) or vice versa.
+        stepIdx = Math.random() < 0.5 ? 9 : 8;
+      } else {
+        stepIdx = Math.max(0, Math.min(this.hijaz.length - 1, lastIdx + (Math.floor(Math.random() * 5) - 2)));
+      }
+      lastIdx = stepIdx;
+      this.kurdishMelody(this.hijaz[stepIdx], at);
+    }
+
+    this.barCount++;
+    this.barTimer = window.setTimeout(() => this.scheduleNextKurdishBar(), barSec * 1000 - 30);
+  }
+
+  private kurdishMelody(hz: number, t: number) {
+    // Slightly more decorated than the song-mode melody — bowed-string-ish with
+    // longer release and a tiny vibrato.
+    const osc = this.ctx.createOscillator();
+    osc.type = "triangle";
+    osc.frequency.value = hz;
+    const lfo = this.ctx.createOscillator();
+    lfo.type = "sine";
+    lfo.frequency.value = 6.5; // ~6.5 Hz vibrato
+    const lfoDepth = this.ctx.createGain();
+    lfoDepth.gain.value = 1.4;
+    lfo.connect(lfoDepth).connect(osc.frequency);
+    const filt = this.ctx.createBiquadFilter();
+    filt.type = "lowpass";
+    filt.frequency.setValueAtTime(2200, t);
+    filt.frequency.exponentialRampToValueAtTime(900, t + 0.7);
+    const env = this.ctx.createGain();
+    env.gain.setValueAtTime(0, t);
+    env.gain.linearRampToValueAtTime(0.16, t + 0.02);
+    env.gain.setValueAtTime(0.16, t + 0.4);
+    env.gain.exponentialRampToValueAtTime(0.0001, t + 0.85);
+    osc.connect(filt).connect(env).connect(this.out);
+    osc.start(t); lfo.start(t);
+    osc.stop(t + 1.0); lfo.stop(t + 1.0);
   }
 
   private startDrift() {

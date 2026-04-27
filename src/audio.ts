@@ -18,10 +18,10 @@ interface AudioConfig {
 }
 
 const PROFILES: Record<VehicleKind, AudioConfig> = {
-  // FJ40: 2F gas engine — wheezier, smoother, faster putt.
-  fj40: { idleHz: 78, throttleSweep: 130, speedHz: 1.8, roughness: 0.18, filterMin: 380, filterMax: 1700, chugDepth: 0.22, wobbleHz: 1.6 },
-  // HJ75: B-series diesel — slower, deeper chug, rattlier.
-  hj75: { idleHz: 56, throttleSweep: 100, speedHz: 1.4, roughness: 0.32, filterMin: 280, filterMax: 1300, chugDepth: 0.38, wobbleHz: 1.0 },
+  // FJ40: 2F gas engine — warm, slightly wheezy, no whine.
+  fj40: { idleHz: 72, throttleSweep: 110, speedHz: 1.4, roughness: 0.10, filterMin: 320, filterMax: 1400, chugDepth: 0.10, wobbleHz: 1.4 },
+  // HJ75: B-series diesel — fuller body, slower chug, more bass.
+  hj75: { idleHz: 50, throttleSweep: 90, speedHz: 1.1, roughness: 0.16, filterMin: 240, filterMax: 1150, chugDepth: 0.16, wobbleHz: 0.9 },
 };
 
 export class AudioSystem {
@@ -73,23 +73,25 @@ export class AudioSystem {
     this.engineFilter.frequency.value = profile.filterMin;
     this.engineFilter.Q.value = 0.6;
 
-    // Three oscillators stacked: fundamental + 2nd harmonic (firing) + sub (chug).
+    // Engine layers: sub (body) + fundamental (warm) + a tiny shimmer harmonic
+    // that only contributes under throttle. Triangle waves throughout for warmth;
+    // no square — that was the source of the previous "whine".
     this.osc1 = ctx.createOscillator();
     this.osc1.type = "sawtooth";
     this.osc1.frequency.value = profile.idleHz;
-    const g1 = ctx.createGain(); g1.gain.value = 0.5;
+    const g1 = ctx.createGain(); g1.gain.value = 0.45;
 
     this.osc2 = ctx.createOscillator();
-    this.osc2.type = "square";
-    this.osc2.frequency.value = profile.idleHz * 2;
-    this.osc2.detune.value = -7; // worn engine: not quite in tune. The humor.
-    const g2 = ctx.createGain(); g2.gain.value = 0.18;
+    this.osc2.type = "triangle"; // was square — too harsh
+    this.osc2.frequency.value = profile.idleHz * 1.5; // 5th-ish, not the buzzy octave
+    this.osc2.detune.value = -7;
+    const g2 = ctx.createGain(); g2.gain.value = 0.08; // much quieter
 
     this.osc3 = ctx.createOscillator();
     this.osc3.type = "sawtooth";
     this.osc3.frequency.value = profile.idleHz * 0.5;
-    this.osc3.detune.value = 4; // also slightly off, opposite direction
-    const g3 = ctx.createGain(); g3.gain.value = 0.22;
+    this.osc3.detune.value = 4;
+    const g3 = ctx.createGain(); g3.gain.value = 0.32; // beefier sub for body
 
     this.osc1.connect(g1).connect(this.engineFilter);
     this.osc2.connect(g2).connect(this.engineFilter);
@@ -195,8 +197,9 @@ export class AudioSystem {
     const cutoff = profile.filterMin + this.throttleSmoothed * (profile.filterMax - profile.filterMin);
     this.engineFilter.frequency.setTargetAtTime(cutoff, t, 0.05);
 
-    // Engine gain — present at idle, louder under throttle.
-    const engineGain = 0.18 + this.throttleSmoothed * 0.32;
+    // Engine gain — quieter overall (was overpowering). Idle is whispery,
+    // full throttle has body without dominating.
+    const engineGain = 0.10 + this.throttleSmoothed * 0.18;
     this.engineGain.gain.setTargetAtTime(engineGain, t, 0.05);
 
     // Wind: scales with speed.

@@ -16,6 +16,7 @@ import {
   buildLimestoneSlab, buildPersianOak, buildStoneWall, buildStream,
   buildVillage, buildGoat, buildPylon, buildPowerLines,
 } from "./scenery";
+import { spawnGoat, spawnBarrel, syncProps, BirdFlock, honk, Prop } from "./props";
 import { SPECS, VehicleKind, buildVehicle, syncVehicleMeshes, Vehicle } from "./vehicle";
 import { AudioSystem } from "./audio";
 import { Radio, DEFAULT_STATIONS } from "./radio";
@@ -30,7 +31,7 @@ import { Howl } from "howler";
 
 type Keys = {
   fwd: boolean; back: boolean; left: boolean; right: boolean;
-  brake: boolean; handbrake: boolean;
+  brake: boolean; handbrake: boolean; boost: boolean;
 };
 
 // Howler-loaded door-close SFX. Generated as a base64 WAV at build time so
@@ -246,15 +247,40 @@ function init(kind: VehicleKind) {
   village.rotation.y = -0.4;
   scene.add(village);
 
+  // Dynamic props: goats that ragdoll when hit, barrels that knock over.
+  const props: Prop[] = [];
+
   // Goats grazing on a south-facing slope, off-road.
   for (let i = 0; i < 6; i++) {
-    const goat = buildGoat();
     const gx = -55 + Math.random() * 18;
     const gz = -25 + Math.random() * 12;
-    goat.position.set(gx, sampleHeight(gx, gz, heights), gz);
-    goat.rotation.y = Math.random() * Math.PI * 2;
-    scene.add(goat);
+    const gy = sampleHeight(gx, gz, heights);
+    props.push(spawnGoat(world, scene, new THREE.Vector3(gx, gy, gz)));
   }
+  // A few extra goats clustered near the dirt track at different points.
+  for (const [bx, bz] of [[8, -65], [-12, -40], [16, 18]] as const) {
+    const gy = sampleHeight(bx, bz, heights);
+    props.push(spawnGoat(world, scene, new THREE.Vector3(bx, gy, bz)));
+  }
+
+  // Oil barrels: clusters at the wreck and one near the canyon entrance.
+  // Knock them over and they roll.
+  const barrelSpots: [number, number][] = [
+    [-44, -28], [-46, -30], [-43, -31], // wreck cluster
+    [-2, -22], [3, -24],                 // canyon entrance
+    [-24, -13],  // near hut (hut is at -28, -10)
+  ];
+  for (const [bx, bz] of barrelSpots) {
+    const by = sampleHeight(bx, bz, heights);
+    props.push(spawnBarrel(world, scene, new THREE.Vector3(bx, by, bz)));
+  }
+
+  // Birds drifting across the corridor.
+  const birds = new BirdFlock(scene, TERRAIN_SIZE / 2 + 20);
+
+  // Stream-splash detection: track when a wheel transitions from above-water
+  // to below-water at the stream crossing (z = -70, water y just under terrain).
+  let inStream = false;
 
   // Power line: three pylons marching off the south side, with sagging wires.
   const pylonPositions = [
@@ -370,7 +396,7 @@ function init(kind: VehicleKind) {
   world.addContactMaterial(wheelGroundContact);
 
   // Input.
-  const keys: Keys = { fwd: false, back: false, left: false, right: false, brake: false, handbrake: false };
+  const keys: Keys = { fwd: false, back: false, left: false, right: false, brake: false, handbrake: false, boost: false };
   const isTextInput = (el: Element | null) =>
     el instanceof HTMLInputElement ||
     el instanceof HTMLTextAreaElement ||
@@ -392,6 +418,7 @@ function init(kind: VehicleKind) {
       case "KeyD": case "ArrowRight": keys.right = down; break;
       case "Space": keys.brake = down; break;
       case "ShiftLeft": case "ShiftRight": keys.handbrake = down; break;
+      case "KeyF": keys.boost = down; break;
       case "KeyR": if (down) resetVehicle(); break;
       case "KeyM": if (down) {
         const muted = audio.toggleMute();
@@ -401,6 +428,7 @@ function init(kind: VehicleKind) {
       case "KeyN": if (down) radio.next(); break;
       case "BracketLeft": if (down) radio.bumpVolume(-0.1); break;
       case "BracketRight": if (down) radio.bumpVolume(0.1); break;
+      case "KeyH": if (down) honk(audio.ctx, audio.master); break;
       default: handled = false;
     }
     if (handled) e.preventDefault();
@@ -486,6 +514,10 @@ function init(kind: VehicleKind) {
   const camOffsetLocal = new THREE.Vector3(0, 5.6, -10);
   let camShakeT = 0; // shake decay timer
   let lastVy = 0;    // for landing detection
+
+  // Boost state — F gives 2.5s of +70% engine force, recharges over 8s.
+  let boostCharge = 1.0; // 0..1
+  let boostActive = false;
   const camTarget = new THREE.Vector3();
   let steering = 0; // smoothed steering value
 
@@ -539,8 +571,9 @@ function init(kind: VehicleKind) {
     v.raycast.setSteeringValue(steering, 0);
     v.raycast.setSteeringValue(steering, 1);
 
-    // Engine: rear-wheel drive.
-    const drive = keys.fwd ? -v.spec.engineForce : keys.back ? v.spec.engineForce * 0.6 : 0;
+    // Engine: rear-wheel drive. Boost gives +70% when active and charged.
+    const boostMul = boostActive && boostCharge > 0 ? 1.7 : 1.0;
+    const drive = keys.fwd ? -v.spec.engineForce * boostMul : keys.back ? v.spec.engineForce * 0.6 : 0;
     v.raycast.applyEngineForce(drive, 2);
     v.raycast.applyEngineForce(drive, 3);
     // No engine on front.
@@ -641,6 +674,53 @@ function init(kind: VehicleKind) {
     dust.update(dt, camera);
     exhaust.update(dt, camera);
 
+    // Dynamic props (goats + barrels) — physics-driven scenery.
+    syncProps(props);
+    // Hit detection: any prop with high relative velocity to the truck just got punted.
+    for (const p of props) {
+      const dx = p.body.position.x - vehicle.chassisBody.position.x;
+      const dy = p.body.position.y - vehicle.chassisBody.position.y;
+      const dz = p.body.position.z - vehicle.chassisBody.position.z;
+      const dist = Math.hypot(dx, dy, dz);
+      if (dist < 4) {
+        const relV = Math.hypot(
+          p.body.velocity.x - vehicle.chassisBody.velocity.x,
+          p.body.velocity.y - vehicle.chassisBody.velocity.y,
+          p.body.velocity.z - vehicle.chassisBody.velocity.z,
+        );
+        if (relV > 6 && !(p as any)._hitFlashed) {
+          (p as any)._hitFlashed = true;
+          if (p.kind === "goat") flash(Math.random() < 0.5 ? "goat went airborne" : "sorry, goat");
+          else                   flash(Math.random() < 0.5 ? "barrel down" : "scattered the barrels");
+          setTimeout(() => { (p as any)._hitFlashed = false; }, 1500);
+        }
+      }
+    }
+    // Birds.
+    birds.update(dt);
+
+    // Water-splash detection: when truck Z passes through the stream band,
+    // spawn a burst of bluish particles (reusing the dust system, recolored).
+    const truckZ = vehicle.chassisBody.position.z;
+    const wasInStream = inStream;
+    inStream = truckZ > -73 && truckZ < -67 && Math.abs(vehicle.chassisBody.position.x) < 9;
+    if (inStream && !wasInStream && planarSpeed > 3) {
+      // Splash burst — 14 particles, faster + lighter than dust.
+      for (let i = 0; i < 14; i++) {
+        dust.spawn(
+          vehicle.chassisBody.position.x + (Math.random() - 0.5) * 2.5,
+          sampleHeight(vehicle.chassisBody.position.x, truckZ, heights) + 0.2,
+          truckZ + (Math.random() - 0.5) * 1.5,
+          (Math.random() - 0.5) * 4,
+          1.6 + Math.random() * 1.8,
+          (Math.random() - 0.5) * 4,
+          0.55,
+          0.6 + Math.random() * 0.5,
+        );
+      }
+      flash("splash");
+    }
+
     // Cargo physics — sync, detect lost, update HUD.
     const cargoStatus = updateCargo(cargo, vehicle);
     hudLoad.textContent = `${cargoStatus.secured}/${cargoStatus.total}`;
@@ -681,6 +761,25 @@ function init(kind: VehicleKind) {
     vehicle.chassisBody.quaternion.vmult(fw, fwWorld);
     const headingDeg = Math.round((Math.atan2(fwWorld.x, fwWorld.z) * 180) / Math.PI);
     hudHeading.textContent = `${headingDeg}°`;
+
+    // Boost charge management.
+    boostActive = keys.boost && keys.fwd && boostCharge > 0;
+    if (boostActive) boostCharge = Math.max(0, boostCharge - dt / 2.5);   // 2.5s of full boost
+    else             boostCharge = Math.min(1, boostCharge + dt / 8);     // 8s full recharge
+    const boostBar = document.getElementById("hud-boost-bar");
+    if (boostBar) boostBar.style.width = `${Math.round(boostCharge * 100)}%`;
+    const boostLabel = document.getElementById("hud-boost-label");
+    if (boostLabel) boostLabel.textContent = boostActive ? "boosting" : (boostCharge >= 1 ? "boost ready" : "boost charging");
+
+    // Drift detection: lateral velocity vs forward velocity ratio.
+    const fwLocal = new CANNON.Vec3(0, 0, 1);
+    const fwWorldVec = new CANNON.Vec3();
+    vehicle.chassisBody.quaternion.vmult(fwLocal, fwWorldVec);
+    const vWorld = vehicle.chassisBody.velocity;
+    const forwardComp = vWorld.x * fwWorldVec.x + vWorld.z * fwWorldVec.z;
+    const lateralComp = Math.hypot(vWorld.x - fwWorldVec.x * forwardComp, vWorld.z - fwWorldVec.z * forwardComp);
+    const drifting = planarSpeed > 6 && lateralComp / planarSpeed > 0.45;
+    document.getElementById("hud-drift")?.classList.toggle("show", drifting);
 
     // Border crossing.
     if (!crossed && vehicle.chassisBody.position.z >= BORDER_Z) {
