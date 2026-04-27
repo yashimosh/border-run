@@ -151,8 +151,8 @@ function init(kind: VehicleKind) {
     vehicle.chassisBody.quaternion.set(0, 0, 0, 1);
   }
 
-  // Camera follow state.
-  const camOffsetLocal = new THREE.Vector3(0, 4.8, -8.5);
+  // Camera follow state. Slightly higher + further so crests don't blind you.
+  const camOffsetLocal = new THREE.Vector3(0, 5.6, -10);
   const camTarget = new THREE.Vector3();
   let steering = 0; // smoothed steering value
 

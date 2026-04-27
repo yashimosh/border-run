@@ -19,6 +19,16 @@ export function buildHeights(): { heights: number[][]; isTrack: boolean[][] } {
   // Track centerline: a sine curve in x as a function of z. Player drives +z.
   const trackX = (zNorm: number) => Math.sin(zNorm * 2.4) * 12 + Math.sin(zNorm * 5.7) * 3;
 
+  // Track elevation: a rolling-hill rhythm along the path. The player crests, drops, crests.
+  // Hill spacing ~24m, peak amplitude ~3.5m. Smaller chord on top to keep crests legible.
+  // Final term bends the whole track gently up toward the +z border so the slice still has
+  // a "rising into territory" arc.
+  const trackY = (z: number) =>
+    Math.sin(z * 0.26) * 3.2 +         // primary rhythm (~24m spacing)
+    Math.sin(z * 0.41 + 0.7) * 1.4 +   // secondary chord, slightly off phase
+    Math.cos(z * 0.13) * 0.8 +         // long undulation
+    Math.max(0, z + 80) * 0.04;        // gentle climb toward the border
+
   for (let i = 0; i < TERRAIN_RES; i++) {
     heights[i] = [];
     isTrack[i] = [];
@@ -27,26 +37,28 @@ export function buildHeights(): { heights: number[][]; isTrack: boolean[][] } {
       const z = (j / (TERRAIN_RES - 1) - 0.5) * TERRAIN_SIZE;
       const zNorm = z / TERRAIN_SIZE;
 
+      // Off-track terrain: ridge to the north, gentle noise, no flat valley anymore.
       const ridge = Math.max(0, z / TERRAIN_SIZE) * 18;
-      const valley = -Math.exp(-Math.pow(z / 24, 2)) * 1.5;
       const noise =
-        Math.sin(x * 0.04) * 0.6 +
-        Math.cos(z * 0.05) * 0.5 +
-        Math.sin((x + z) * 0.09) * 0.25 +
-        Math.sin(x * 0.21) * 0.15;
+        Math.sin(x * 0.04) * 0.7 +
+        Math.cos(z * 0.05) * 0.6 +
+        Math.sin((x + z) * 0.09) * 0.3 +
+        Math.sin(x * 0.21) * 0.18;
 
-      let h = ridge + valley + noise;
+      let h = ridge + noise;
 
       const tx = trackX(zNorm);
       const distToTrack = Math.abs(x - tx);
       const onTrack = distToTrack < 4.0;
-      const inTrackInfluence = distToTrack < 8.0;
+      const inTrackInfluence = distToTrack < 9.0;
 
       if (inTrackInfluence) {
-        // Smooth blend: the closer to centerline, the flatter and lower (graded path).
-        const t = Math.max(0, Math.min(1, 1 - distToTrack / 8));
-        const targetH = ridge * 0.7 + valley * 0.5 - 0.25;
-        h = h * (1 - t * 0.85) + targetH * (t * 0.85);
+        // Closer to centerline → height resolves to the hill-rhythm curve.
+        // The grading still happens (we override the surrounding terrain) but the
+        // target height is a rolling hill, not a flat road.
+        const t = Math.max(0, Math.min(1, 1 - distToTrack / 9));
+        const targetH = trackY(z);
+        h = h * (1 - t * 0.92) + targetH * (t * 0.92);
       }
 
       heights[i][j] = h;
