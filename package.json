@@ -1,0 +1,23 @@
+{
+  "name": "border-run",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview --host 0.0.0.0 --port 4321"
+  },
+  "dependencies": {
+    "cannon-es": "0.20.0",
+    "three": "0.168.0"
+  },
+  "devDependencies": {
+    "@types/three": "0.168.0",
+    "typescript": "5.5.4",
+    "vite": "5.4.10"
+  }
+}
