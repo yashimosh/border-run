@@ -65,13 +65,31 @@
       }
       .colophon a:hover, .colophon button:hover { text-decoration-color: rgba(232,230,225,0.9); opacity: 1; }
 
-      #hud-pause {
-        position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
-        font-size: 14px; letter-spacing: 0.4em; opacity: 0; pointer-events: none;
-        text-transform: uppercase; transition: opacity 250ms;
-        text-shadow: 0 1px 8px rgba(0,0,0,0.6);
+      #pause-menu {
+        position: fixed; inset: 0; background: rgba(11,11,12,0.78);
+        display: none; align-items: center; justify-content: center;
+        z-index: 150; backdrop-filter: blur(2px);
       }
-      #hud-pause.show { opacity: 0.6; }
+      #pause-menu.show { display: flex; }
+      #pause-menu .card {
+        text-align: center; max-width: 460px; width: calc(100% - 40px);
+        padding: 30px 28px;
+      }
+      #pause-menu h1 { font: 500 22px/1.2 ui-monospace, monospace; letter-spacing: 0.04em; margin-bottom: 8px; }
+      #pause-menu .sub { font-size: 12px; opacity: 0.55; margin-bottom: 22px; }
+      #pause-menu .actions { display: flex; flex-direction: column; gap: 10px; align-items: stretch; }
+      #pause-menu button {
+        font: inherit; background: transparent; color: inherit;
+        border: 1px solid rgba(232,230,225,0.25); padding: 10px 16px; cursor: pointer;
+        letter-spacing: 0.08em; text-transform: uppercase; font-size: 11px;
+        transition: border-color 200ms, background 200ms;
+      }
+      #pause-menu button:hover { border-color: #e8e6e1; background: rgba(232,230,225,0.04); }
+      #pause-menu button.primary { border-color: rgba(232,230,225,0.6); }
+      #pause-menu button.primary:hover { background: rgba(232,230,225,0.08); }
+      #pause-menu .stats {
+        margin-top: 22px; font-size: 10px; opacity: 0.4; letter-spacing: 0.06em;
+      }
 
       .fb-modal {
         position: fixed; inset: 0; background: rgba(11,11,12,0.78);
@@ -190,7 +208,19 @@
       slice v0.4 · <button type="button" data-fb-open>send feedback</button> · esc pauses
     </div>
 
-    <div id="hud-pause">paused</div>
+    <div id="pause-menu">
+      <div class="card">
+        <h1>Paused</h1>
+        <p class="sub">The line is still where it was.</p>
+        <div class="actions">
+          <button id="pm-resume" class="primary">Resume</button>
+          <button id="pm-reset">Reset truck</button>
+          <button id="pm-switch">Switch truck</button>
+          <button id="pm-feedback">Send feedback</button>
+        </div>
+        <div class="stats" id="pm-stats">…</div>
+      </div>
+    </div>
 
     <div class="fb-modal" id="fb-modal">
       <div class="fb-card">

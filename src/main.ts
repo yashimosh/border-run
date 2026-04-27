@@ -408,29 +408,70 @@ function init(kind: VehicleKind) {
   window.addEventListener("keydown", setKey(true));
   window.addEventListener("keyup", setKey(false));
 
-  // — Pause system. Used by the feedback modal and Escape.
+  // — Pause system. Pause menu mirrors the starter screen visually with
+  // context-appropriate verbs. Escape opens/closes; clicking Resume closes.
   let paused = false;
-  const pauseIndicator = document.getElementById("hud-pause");
+  const pauseMenu = document.getElementById("pause-menu");
+  const pmStats = document.getElementById("pm-stats");
+
   function setPaused(v: boolean) {
     paused = v;
     keys.fwd = keys.back = keys.left = keys.right = keys.brake = keys.handbrake = false;
-    if (pauseIndicator) pauseIndicator.classList.toggle("show", v);
-    // We don't touch audio.toggleMute() here — that would invert any user mute state.
-    // Instead the tick loop feeds zero throttle/speed when paused (below), so the
-    // engine settles to idle and wind/tire fade out naturally.
+    // Audio mute is left alone — tick feeds zero throttle/speed when paused.
   }
+
+  async function showPauseMenu() {
+    setPaused(true);
+    pauseMenu?.classList.add("show");
+    if (pmStats) {
+      const s = await fetchStats();
+      if (s) pmStats.textContent = formatStats(s);
+    }
+  }
+  function hidePauseMenu() {
+    pauseMenu?.classList.remove("show");
+    setPaused(false);
+  }
+
+  // Pause-menu button wiring.
+  document.getElementById("pm-resume")?.addEventListener("click", hidePauseMenu);
+  document.getElementById("pm-reset")?.addEventListener("click", () => {
+    resetVehicle();
+    hidePauseMenu();
+  });
+  document.getElementById("pm-switch")?.addEventListener("click", () => {
+    // Reload to the title screen so the user can pick a different truck.
+    // Cleanest re-init path; avoids tearing down + rebuilding the scene by hand.
+    window.location.reload();
+  });
+  document.getElementById("pm-feedback")?.addEventListener("click", () => {
+    // Open the feedback modal. Game stays paused (modal also pauses on its own).
+    pauseMenu?.classList.remove("show");
+    document.querySelector<HTMLElement>("[data-fb-open]")?.click();
+  });
+
   // Custom events let other modules trigger pause without a tight import.
   window.addEventListener("game:pause", () => setPaused(true));
-  window.addEventListener("game:resume", () => setPaused(false));
+  window.addEventListener("game:resume", () => {
+    // If the pause menu is also showing, leave it; otherwise unpause.
+    if (!pauseMenu?.classList.contains("show")) setPaused(false);
+  });
+  // When feedback closes, return to pause menu (which is what we came from).
+  window.addEventListener("feedback:close", () => {
+    if (paused) pauseMenu?.classList.add("show");
+  });
 
   function handleEscape() {
-    const modal = document.getElementById("fb-modal");
-    if (modal?.classList.contains("show")) {
-      // Modal close is owned by the feedback module; it will dispatch game:resume.
+    const fbModal = document.getElementById("fb-modal");
+    if (fbModal?.classList.contains("show")) {
       window.dispatchEvent(new CustomEvent("feedback:close"));
       return;
     }
-    setPaused(!paused);
+    if (pauseMenu?.classList.contains("show")) {
+      hidePauseMenu();
+    } else {
+      showPauseMenu();
+    }
   }
 
   function resetVehicle() {
