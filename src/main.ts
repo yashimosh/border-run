@@ -5,12 +5,13 @@
 import * as THREE from "three";
 import * as CANNON from "cannon-es";
 import {
-  TERRAIN_SIZE, BORDER_Z,
+  TERRAIN_SIZE, TERRAIN_RES, BORDER_Z,
   buildHeights, buildHeightfieldBody, buildTerrainMesh, sampleHeight,
   buildSkyGradient, buildWatchtower, buildHut, buildDistantRidge,
   buildRocks, buildScrub, buildBorderPosts, buildBorderLine,
 } from "./world";
 import { SPECS, VehicleKind, buildVehicle, syncVehicleMeshes, Vehicle } from "./vehicle";
+import { AudioSystem } from "./audio";
 
 type Keys = {
   fwd: boolean; back: boolean; left: boolean; right: boolean;
@@ -109,6 +110,10 @@ function init(kind: VehicleKind) {
   scene.add(buildScrub(heights, isTrack, 220));
   scene.add(buildDistantRidge());
 
+  // Audio. Init now (Drive click already provided the user gesture for AudioContext).
+  const audio = new AudioSystem(kind);
+  audio.resume();
+
   // Vehicle.
   const spec = SPECS[kind];
   const spawnX = Math.sin((-0.42) * 2.4) * 12 + Math.sin((-0.42) * 5.7) * 3; // align spawn to track curve at z = -126
@@ -137,6 +142,10 @@ function init(kind: VehicleKind) {
       case "Space": keys.brake = down; break;
       case "ShiftLeft": case "ShiftRight": keys.handbrake = down; break;
       case "KeyR": if (down) resetVehicle(); break;
+      case "KeyM": if (down) {
+        const muted = audio.toggleMute();
+        flash(muted ? "muted" : "sound on");
+      } break;
       default: handled = false;
     }
     if (handled) e.preventDefault();
@@ -218,6 +227,15 @@ function init(kind: VehicleKind) {
     applyDriveInput(dt, vehicle);
     world.step(fixedStep, dt, 3);
     syncVehicleMeshes(vehicle);
+
+    // Audio update — derive throttle (signed), speed, and on-track from current state.
+    const throttle = keys.fwd ? 1 : keys.back ? -1 : 0;
+    const planarSpeed = Math.hypot(vehicle.chassisBody.velocity.x, vehicle.chassisBody.velocity.z);
+    const elementSize = TERRAIN_SIZE / (TERRAIN_RES - 1);
+    const ti = Math.max(0, Math.min(TERRAIN_RES - 1, Math.floor((vehicle.chassisBody.position.x + TERRAIN_SIZE / 2) / elementSize)));
+    const tj = Math.max(0, Math.min(TERRAIN_RES - 1, Math.floor((TERRAIN_SIZE / 2 - vehicle.chassisBody.position.z) / elementSize)));
+    const onTrack = isTrack[ti][tj];
+    audio.update(dt, throttle, planarSpeed, onTrack);
 
     // Camera follow.
     const desired = vehicle.chassisMesh.localToWorld(camOffsetLocal.clone());
