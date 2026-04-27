@@ -29,17 +29,17 @@ export const SPECS: Record<VehicleKind, VehicleSpec> = {
     name: "Land Cruiser FJ40",
     year: "'79",
     chassisHalfExtents: new CANNON.Vec3(0.85, 0.45, 1.85),
-    chassisMass: 1300,
+    chassisMass: 1200,
     wheelPositions: [
-      { x:  0.85, y: -0.25, z:  1.2 }, // front-right
-      { x: -0.85, y: -0.25, z:  1.2 }, // front-left
-      { x:  0.85, y: -0.25, z: -1.2 }, // rear-right
-      { x: -0.85, y: -0.25, z: -1.2 }, // rear-left
+      { x:  0.85, y: -0.25, z:  1.2 },
+      { x: -0.85, y: -0.25, z:  1.2 },
+      { x:  0.85, y: -0.25, z: -1.2 },
+      { x: -0.85, y: -0.25, z: -1.2 },
     ],
     wheelRadius: 0.4,
-    engineForce: 2200,
-    brakeForce: 60,
-    maxSteer: 0.55,
+    engineForce: 3200, // snappier
+    brakeForce: 55,
+    maxSteer: 0.6,
     meshOffsetY: -0.45,
   },
   hj75: {
@@ -47,7 +47,7 @@ export const SPECS: Record<VehicleKind, VehicleSpec> = {
     name: "Land Cruiser HJ75",
     year: "'85",
     chassisHalfExtents: new CANNON.Vec3(0.9, 0.5, 2.5),
-    chassisMass: 1700,
+    chassisMass: 1550,
     wheelPositions: [
       { x:  0.9, y: -0.3, z:  1.65 },
       { x: -0.9, y: -0.3, z:  1.65 },
@@ -55,9 +55,9 @@ export const SPECS: Record<VehicleKind, VehicleSpec> = {
       { x: -0.9, y: -0.3, z: -1.65 },
     ],
     wheelRadius: 0.42,
-    engineForce: 2600,
-    brakeForce: 70,
-    maxSteer: 0.45,
+    engineForce: 3800,
+    brakeForce: 65,
+    maxSteer: 0.5,
     meshOffsetY: -0.5,
   },
 };
@@ -68,6 +68,10 @@ export interface Vehicle {
   raycast: CANNON.RaycastVehicle;
   chassisMesh: THREE.Object3D;
   wheelMeshes: THREE.Mesh[];
+  headlights: THREE.SpotLight[];
+  // Local offsets for VFX hooks.
+  exhaustLocal: THREE.Vector3;
+  wheelGroundLocal: THREE.Vector3[]; // contact-point offsets (one per wheel)
 }
 
 export function buildVehicle(spec: VehicleSpec, world: CANNON.World, spawn: CANNON.Vec3): Vehicle {
@@ -87,16 +91,16 @@ export function buildVehicle(spec: VehicleSpec, world: CANNON.World, spawn: CANN
   const wheelOpts = {
     radius: spec.wheelRadius,
     directionLocal: new CANNON.Vec3(0, -1, 0),
-    suspensionStiffness: 32,
-    suspensionRestLength: 0.32,
-    frictionSlip: 1.55,
-    dampingRelaxation: 2.4,
-    dampingCompression: 4.5,
-    maxSuspensionForce: 100000,
-    rollInfluence: 0.04,
+    suspensionStiffness: 38,
+    suspensionRestLength: 0.34,
+    frictionSlip: 2.2,           // better grip — less skating
+    dampingRelaxation: 2.6,
+    dampingCompression: 4.8,
+    maxSuspensionForce: 120000,
+    rollInfluence: 0.03,
     axleLocal: new CANNON.Vec3(-1, 0, 0),
     chassisConnectionPointLocal: new CANNON.Vec3(),
-    maxSuspensionTravel: 0.35,
+    maxSuspensionTravel: 0.4,
     customSlidingRotationalSpeed: -30,
     useCustomSlidingRotationalSpeed: true,
   };
@@ -118,7 +122,32 @@ export function buildVehicle(spec: VehicleSpec, world: CANNON.World, spawn: CANN
     wheelMeshes.push(m);
   }
 
-  return { spec, chassisBody, raycast, chassisMesh, wheelMeshes };
+  // Headlights — two SpotLights parented to the chassis mesh, aimed forward (+z).
+  const headlights: THREE.SpotLight[] = [];
+  const headlightForwardZ = spec.kind === "fj40" ? 1.95 : 2.85;
+  const headlightX = 0.6;
+  for (const sign of [-1, 1]) {
+    const light = new THREE.SpotLight(0xfff0c8, 18, 35, Math.PI / 7, 0.45, 1.4);
+    light.position.set(sign * headlightX, 0.55, headlightForwardZ);
+    const target = new THREE.Object3D();
+    target.position.set(sign * headlightX * 0.5, -0.2, headlightForwardZ + 6);
+    chassisMesh.add(target);
+    light.target = target;
+    chassisMesh.add(light);
+    headlights.push(light);
+  }
+
+  // VFX local offsets.
+  const exhaustLocal = new THREE.Vector3(
+    spec.kind === "fj40" ? 0.7 : 0.85,
+    -0.05,
+    spec.kind === "fj40" ? -1.95 : -2.6
+  );
+  const wheelGroundLocal = spec.wheelPositions.map(
+    wp => new THREE.Vector3(wp.x, wp.y - spec.wheelRadius, wp.z)
+  );
+
+  return { spec, chassisBody, raycast, chassisMesh, wheelMeshes, headlights, exhaustLocal, wheelGroundLocal };
 }
 
 export function syncVehicleMeshes(v: Vehicle) {

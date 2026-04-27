@@ -13,6 +13,8 @@ import {
 } from "./world";
 import { SPECS, VehicleKind, buildVehicle, syncVehicleMeshes, Vehicle } from "./vehicle";
 import { AudioSystem } from "./audio";
+import { Radio, DEFAULT_STATIONS } from "./radio";
+import { ParticleSystem } from "./particles";
 
 type Keys = {
   fwd: boolean; back: boolean; left: boolean; right: boolean;
@@ -174,6 +176,9 @@ function init(kind: VehicleKind) {
   const audio = new AudioSystem(kind);
   audio.resume();
 
+  // Radio shares the same audio context.
+  const radio = new Radio(audio.ctx, audio.master, DEFAULT_STATIONS);
+
   // Vehicle.
   const spec = SPECS[kind];
   const spawnX = Math.sin((-0.42) * 2.4) * 12 + Math.sin((-0.42) * 5.7) * 3; // align spawn to track curve at z = -126
@@ -181,6 +186,12 @@ function init(kind: VehicleKind) {
   const vehicle = buildVehicle(spec, world, new CANNON.Vec3(spawnX, spawnY, -120));
   scene.add(vehicle.chassisMesh);
   for (const w of vehicle.wheelMeshes) scene.add(w);
+
+  // Particle systems: dust under wheels (sandy), exhaust from tailpipe (dark grey).
+  const dust = new ParticleSystem(80, 0xb09a82, 1.0);
+  const exhaust = new ParticleSystem(40, 0x444444, -0.4); // negative gravity = rises
+  scene.add(dust.mesh);
+  scene.add(exhaust.mesh);
 
   // Contact material: sharper grip on heightfield.
   const wheelGroundContact = new CANNON.ContactMaterial(
@@ -206,6 +217,10 @@ function init(kind: VehicleKind) {
         const muted = audio.toggleMute();
         flash(muted ? "muted" : "sound on");
       } break;
+      case "KeyB": if (down) radio.toggle(); break;            // radio on/off
+      case "KeyN": if (down) radio.next(); break;              // next station
+      case "BracketLeft": if (down) radio.bumpVolume(-0.1); break;
+      case "BracketRight": if (down) radio.bumpVolume(0.1); break;
       default: handled = false;
     }
     if (handled) e.preventDefault();
@@ -222,6 +237,8 @@ function init(kind: VehicleKind) {
 
   // Camera follow state. Slightly higher + further so crests don't blind you.
   const camOffsetLocal = new THREE.Vector3(0, 5.6, -10);
+  let camShakeT = 0; // shake decay timer
+  let lastVy = 0;    // for landing detection
   const camTarget = new THREE.Vector3();
   let steering = 0; // smoothed steering value
 
@@ -297,10 +314,69 @@ function init(kind: VehicleKind) {
     const onTrack = isTrack[ti][tj];
     audio.update(dt, throttle, planarSpeed, onTrack);
 
+    // Landing detection — sharp downward velocity → upward = camera shake kick.
+    const vy = vehicle.chassisBody.velocity.y;
+    if (vy - lastVy > 6 && planarSpeed > 4) camShakeT = 0.45;
+    lastVy = vy;
+    if (camShakeT > 0) camShakeT = Math.max(0, camShakeT - dt);
+
+    // Particle spawns.
+    // Dust: under each wheel, gated by speed.
+    if (planarSpeed > 2) {
+      const dustChance = Math.min(1, (planarSpeed - 2) / 8);
+      for (let wi = 0; wi < vehicle.raycast.wheelInfos.length; wi++) {
+        if (Math.random() > dustChance * 0.6) continue;
+        const wt = vehicle.raycast.wheelInfos[wi].worldTransform;
+        // Only spawn when wheel is close to the ground (suspension compressed).
+        const wheelMesh = vehicle.wheelMeshes[wi];
+        const groundH = sampleHeight(wt.position.x, wt.position.z, heights);
+        if (wheelMesh.position.y - groundH > 0.5) continue;
+        dust.spawn(
+          wt.position.x + (Math.random() - 0.5) * 0.4,
+          groundH + 0.1,
+          wt.position.z + (Math.random() - 0.5) * 0.4,
+          (Math.random() - 0.5) * 1.5,
+          0.6 + Math.random() * 0.4,
+          (Math.random() - 0.5) * 1.5,
+          onTrack ? 0.55 : 0.85,
+          0.5 + Math.random() * 0.6,
+        );
+      }
+    }
+    // Exhaust: from tailpipe when accelerating.
+    if (keys.fwd) {
+      const ex = vehicle.chassisMesh.localToWorld(vehicle.exhaustLocal.clone());
+      exhaust.spawn(
+        ex.x + (Math.random() - 0.5) * 0.15,
+        ex.y,
+        ex.z,
+        (Math.random() - 0.5) * 0.4,
+        0.3 + Math.random() * 0.4,
+        -0.6 - Math.random() * 0.6,
+        1.2 + Math.random() * 0.4,
+        0.3 + Math.random() * 0.3,
+      );
+    }
+    dust.update(dt, camera);
+    exhaust.update(dt, camera);
+
     // Camera follow.
     const desired = vehicle.chassisMesh.localToWorld(camOffsetLocal.clone());
     camera.position.lerp(desired, 1 - Math.pow(0.001, dt));
     camTarget.copy(vehicle.chassisMesh.position).add(new THREE.Vector3(0, 1.5, 0));
+
+    // Speed-based FOV: pulls back as you gain speed for the rush.
+    const speedNorm = Math.min(1, planarSpeed / 22);
+    const targetFov = 60 + speedNorm * 12;
+    camera.fov += (targetFov - camera.fov) * Math.min(1, dt * 4);
+    camera.updateProjectionMatrix();
+
+    // Landing shake — quick, dampened.
+    if (camShakeT > 0) {
+      const amp = camShakeT * 0.25;
+      camera.position.x += (Math.random() - 0.5) * amp;
+      camera.position.y += (Math.random() - 0.5) * amp;
+    }
     camera.lookAt(camTarget);
 
     // HUD.

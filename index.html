@@ -20,6 +20,7 @@
       .hud.bl { bottom: 0; left: 0; }
       .hud .k { opacity: 0.55; }
       .hud .v { opacity: 0.95; }
+      #hud-radio.tuning { color: #e0c878; transition: color 80ms; }
       .hud kbd { font: inherit; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.12); padding: 1px 5px; border-radius: 3px; }
 
       #title {
@@ -75,10 +76,12 @@
       <div><span class="k">speed</span> <span class="v" id="hud-speed">0</span> <span class="k">km/h</span></div>
       <div><span class="k">load</span> <span class="v" id="hud-load">4/4</span> <span class="k">secured</span></div>
       <div><span class="k">heading</span> <span class="v" id="hud-heading">—</span></div>
+      <div><span class="k">radio</span> <span class="v" id="hud-radio">off</span></div>
     </div>
 
     <div class="hud bl">
-      <div><kbd>W</kbd> <kbd>A</kbd> <kbd>S</kbd> <kbd>D</kbd> drive · <kbd>Shift</kbd> handbrake · <kbd>Space</kbd> brake · <kbd>R</kbd> reset · <kbd>M</kbd> mute</div>
+      <div><kbd>W</kbd> <kbd>A</kbd> <kbd>S</kbd> <kbd>D</kbd> drive · <kbd>Shift</kbd> handbrake · <kbd>Space</kbd> brake · <kbd>R</kbd> reset</div>
+      <div style="margin-top:6px;opacity:0.7"><kbd>B</kbd> radio · <kbd>N</kbd> next station · <kbd>[</kbd> <kbd>]</kbd> volume · <kbd>M</kbd> mute</div>
     </div>
 
     <div id="title">

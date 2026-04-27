@@ -25,8 +25,8 @@ const PROFILES: Record<VehicleKind, AudioConfig> = {
 };
 
 export class AudioSystem {
-  private ctx: AudioContext;
-  private master: GainNode;
+  ctx: AudioContext;
+  master: GainNode;
   private engineGain!: GainNode;
   private engineFilter!: BiquadFilterNode;
   private osc1!: OscillatorNode;

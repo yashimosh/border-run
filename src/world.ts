@@ -19,15 +19,24 @@ export function buildHeights(): { heights: number[][]; isTrack: boolean[][] } {
   // Track centerline: a sine curve in x as a function of z. Player drives +z.
   const trackX = (zNorm: number) => Math.sin(zNorm * 2.4) * 12 + Math.sin(zNorm * 5.7) * 3;
 
-  // Track elevation: a rolling-hill rhythm along the path. The player crests, drops, crests.
-  // Hill spacing ~24m, peak amplitude ~3.5m. Smaller chord on top to keep crests legible.
-  // Final term bends the whole track gently up toward the +z border so the slice still has
-  // a "rising into territory" arc.
-  const trackY = (z: number) =>
-    Math.sin(z * 0.26) * 3.2 +         // primary rhythm (~24m spacing)
-    Math.sin(z * 0.41 + 0.7) * 1.4 +   // secondary chord, slightly off phase
-    Math.cos(z * 0.13) * 0.8 +         // long undulation
-    Math.max(0, z + 80) * 0.04;        // gentle climb toward the border
+  // Track elevation: rolling-hill rhythm + one authored ramp for the launch moment.
+  // The ramp is a steep crest at z ≈ 5 (just before the border) — it's the indie-game
+  // "moment" beat where you can catch air if you hit it fast.
+  const trackY = (z: number) => {
+    let h =
+      Math.sin(z * 0.26) * 3.2 +
+      Math.sin(z * 0.41 + 0.7) * 1.4 +
+      Math.cos(z * 0.13) * 0.8 +
+      Math.max(0, z + 80) * 0.04;
+    // Ramp: localized bump centered at z=5, ~10m wide, ~3m peak. Asymmetric — steeper
+    // on the approach (-z side), shallower on the descent so you actually launch.
+    const rampDist = z - 5;
+    if (rampDist > -8 && rampDist < 6) {
+      const t = rampDist < 0 ? (rampDist + 8) / 8 : 1 - rampDist / 6;
+      h += Math.max(0, t) * 3.0;
+    }
+    return h;
+  };
 
   for (let i = 0; i < TERRAIN_RES; i++) {
     heights[i] = [];
