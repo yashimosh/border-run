@@ -22,6 +22,7 @@ import { Radio, DEFAULT_STATIONS } from "./radio";
 import { ParticleSystem } from "./particles";
 import { spawnCargo, updateCargo, resetCargo, CargoItem } from "./cargo";
 import { setupFeedback } from "./feedback";
+import { recordSession, fetchStats, formatStats } from "./analytics";
 import { createDevtools } from "./devtools";
 import { createPostFx } from "./postfx";
 import gsap from "gsap";
@@ -65,11 +66,19 @@ function boot() {
 }
 
 if (document.readyState === "loading") {
-  document.addEventListener("DOMContentLoaded", () => { hideLoader(); setupFeedback(); boot(); });
+  document.addEventListener("DOMContentLoaded", () => { hideLoader(); setupFeedback(); fillStatsLine(); boot(); });
 } else {
   hideLoader();
   setupFeedback();
+  fillStatsLine();
   boot();
+}
+
+async function fillStatsLine() {
+  const el = document.getElementById("hud-stats");
+  if (!el) return;
+  const s = await fetchStats();
+  if (s) el.textContent = formatStats(s);
 }
 
 function hideLoader() {
@@ -80,6 +89,10 @@ function hideLoader() {
 }
 
 function init(kind: VehicleKind) {
+  // Record this play. Server sets a long-lived cookie on first visit so
+  // unique-player counts work without a login.
+  recordSession();
+
   const stage = document.getElementById("stage")!;
   const renderer = new THREE.WebGLRenderer({
     antialias: false, // disabled — we use postprocessing-based smoothing
@@ -358,7 +371,19 @@ function init(kind: VehicleKind) {
 
   // Input.
   const keys: Keys = { fwd: false, back: false, left: false, right: false, brake: false, handbrake: false };
+  const isTextInput = (el: Element | null) =>
+    el instanceof HTMLInputElement ||
+    el instanceof HTMLTextAreaElement ||
+    (el instanceof HTMLElement && el.isContentEditable);
+
   const setKey = (down: boolean) => (e: KeyboardEvent) => {
+    // Don't steal keys from text inputs (feedback modal etc).
+    if (isTextInput(document.activeElement)) return;
+    // Escape is always handled (so user can close modals / pause even from anywhere).
+    if (e.code === "Escape" && down) { handleEscape(); e.preventDefault(); return; }
+    // When the game is paused, ignore game-control keys entirely.
+    if (paused) return;
+
     let handled = true;
     switch (e.code) {
       case "KeyW": case "ArrowUp": keys.fwd = down; break;
@@ -372,8 +397,8 @@ function init(kind: VehicleKind) {
         const muted = audio.toggleMute();
         flash(muted ? "muted" : "sound on");
       } break;
-      case "KeyB": if (down) radio.toggle(); break;            // radio on/off
-      case "KeyN": if (down) radio.next(); break;              // next station
+      case "KeyB": if (down) radio.toggle(); break;
+      case "KeyN": if (down) radio.next(); break;
       case "BracketLeft": if (down) radio.bumpVolume(-0.1); break;
       case "BracketRight": if (down) radio.bumpVolume(0.1); break;
       default: handled = false;
@@ -382,6 +407,31 @@ function init(kind: VehicleKind) {
   };
   window.addEventListener("keydown", setKey(true));
   window.addEventListener("keyup", setKey(false));
+
+  // — Pause system. Used by the feedback modal and Escape.
+  let paused = false;
+  const pauseIndicator = document.getElementById("hud-pause");
+  function setPaused(v: boolean) {
+    paused = v;
+    keys.fwd = keys.back = keys.left = keys.right = keys.brake = keys.handbrake = false;
+    if (pauseIndicator) pauseIndicator.classList.toggle("show", v);
+    // We don't touch audio.toggleMute() here — that would invert any user mute state.
+    // Instead the tick loop feeds zero throttle/speed when paused (below), so the
+    // engine settles to idle and wind/tire fade out naturally.
+  }
+  // Custom events let other modules trigger pause without a tight import.
+  window.addEventListener("game:pause", () => setPaused(true));
+  window.addEventListener("game:resume", () => setPaused(false));
+
+  function handleEscape() {
+    const modal = document.getElementById("fb-modal");
+    if (modal?.classList.contains("show")) {
+      // Modal close is owned by the feedback module; it will dispatch game:resume.
+      window.dispatchEvent(new CustomEvent("feedback:close"));
+      return;
+    }
+    setPaused(!paused);
+  }
 
   function resetVehicle() {
     vehicle.chassisBody.position.set(spawnX, spawnY, spawnZ);
@@ -467,6 +517,19 @@ function init(kind: VehicleKind) {
 
   function tick() {
     const dt = Math.min(clock.getDelta(), 0.1);
+
+    if (paused) {
+      // Frozen world: don't step physics, don't apply drive forces, keep
+      // meshes in their current positions, feed zero to audio so the engine
+      // settles and wind/tire fade out.
+      audio.update(dt, 0, 0, true);
+      // Still render so the scene stays visible behind the modal/overlay.
+      dev.begin();
+      postfx.render(dt);
+      dev.end();
+      requestAnimationFrame(tick);
+      return;
+    }
 
     applyDriveInput(dt, vehicle);
     world.step(fixedStep, dt, 3);

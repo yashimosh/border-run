@@ -57,15 +57,21 @@
       }
       #loader.hide { opacity: 0; pointer-events: none; }
 
-      .fb-btn {
-        position: fixed; bottom: 12px; left: 14px; z-index: 50;
-        font: inherit; font-size: 11px; letter-spacing: 0.08em;
-        background: rgba(11,11,12,0.6); color: rgba(232,230,225,0.7);
-        border: 1px solid rgba(232,230,225,0.18); padding: 6px 10px;
-        cursor: pointer; backdrop-filter: blur(6px);
-        text-transform: uppercase; transition: all 200ms;
+      .colophon a, .colophon button {
+        color: inherit; background: none; border: none; padding: 0;
+        cursor: pointer; font: inherit; font-size: inherit;
+        text-decoration: underline; text-decoration-color: rgba(232,230,225,0.25);
+        text-underline-offset: 3px; transition: text-decoration-color 200ms, opacity 200ms;
       }
-      .fb-btn:hover { color: #e8e6e1; border-color: rgba(232,230,225,0.5); }
+      .colophon a:hover, .colophon button:hover { text-decoration-color: rgba(232,230,225,0.9); opacity: 1; }
+
+      #hud-pause {
+        position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+        font-size: 14px; letter-spacing: 0.4em; opacity: 0; pointer-events: none;
+        text-transform: uppercase; transition: opacity 250ms;
+        text-shadow: 0 1px 8px rgba(0,0,0,0.6);
+      }
+      #hud-pause.show { opacity: 0.6; }
 
       .fb-modal {
         position: fixed; inset: 0; background: rgba(11,11,12,0.78);
@@ -175,19 +181,25 @@
         </label>
       </div>
       <button id="start">Drive</button>
+      <div id="hud-stats" style="margin-top:18px; font-size:10px; opacity:0.4; letter-spacing:0.06em;">…</div>
     </div>
 
     <div id="event">— crossing —</div>
 
-    <div class="colophon">slice v0.4</div>
+    <div class="colophon">
+      slice v0.4 · <button type="button" data-fb-open>send feedback</button> · esc pauses
+    </div>
 
-    <button class="fb-btn" id="fb-open">feedback</button>
+    <div id="hud-pause">paused</div>
+
     <div class="fb-modal" id="fb-modal">
       <div class="fb-card">
         <h2>Tell me what's wrong with it</h2>
         <p class="sub">Bug, weird feel, suggestion, or just a reaction. Anything goes.</p>
         <label for="fb-name">Name (optional)</label>
-        <input type="text" id="fb-name" placeholder="anonymous is fine" />
+        <input type="text" id="fb-name" placeholder="anonymous is fine" autocomplete="off" />
+        <label for="fb-email">Email (optional, only if you want a reply)</label>
+        <input type="email" id="fb-email" placeholder="you@example.com" autocomplete="email" />
         <label for="fb-msg">Message</label>
         <textarea id="fb-msg" placeholder="the steering felt floaty after the canyon section…"></textarea>
         <div class="fb-actions">
