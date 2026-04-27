@@ -9,6 +9,7 @@ import {
   buildHeights, buildHeightfieldBody, buildTerrainMesh, sampleHeight,
   buildSkyGradient, buildWatchtower, buildHut, buildDistantRidge,
   buildRocks, buildScrub, buildBorderPosts, buildBorderLine,
+  buildCairn, buildWreck, buildCypress, buildFlagPole,
 } from "./world";
 import { SPECS, VehicleKind, buildVehicle, syncVehicleMeshes, Vehicle } from "./vehicle";
 import { AudioSystem } from "./audio";
@@ -109,6 +110,65 @@ function init(kind: VehicleKind) {
   scene.add(buildRocks(heights, isTrack, 90));
   scene.add(buildScrub(heights, isTrack, 220));
   scene.add(buildDistantRidge());
+
+  // Cairns along the track — quiet markers that someone has passed before.
+  // Track centerline shorthand reused here (sine curve in x as a function of z).
+  const trackXAt = (z: number) => {
+    const zNorm = z / TERRAIN_SIZE;
+    return Math.sin(zNorm * 2.4) * 12 + Math.sin(zNorm * 5.7) * 3;
+  };
+  for (const z of [-90, -50, -10, 25, 70]) {
+    const cairn = buildCairn();
+    const sideOffset = (Math.random() < 0.5 ? -1 : 1) * (5 + Math.random() * 2);
+    const cx = trackXAt(z) + sideOffset;
+    cairn.position.set(cx, sampleHeight(cx, z, heights), z);
+    cairn.rotation.y = Math.random() * Math.PI;
+    scene.add(cairn);
+  }
+
+  // Wrecked truck off the road — a previous run that didn't make it. South side.
+  const wreck = buildWreck();
+  const wreckZ = -30;
+  const wreckX = trackXAt(wreckZ) - 14;
+  wreck.position.set(wreckX, sampleHeight(wreckX, wreckZ, heights), wreckZ);
+  wreck.rotation.y = -0.7;
+  scene.add(wreck);
+
+  // Cypresses near the hut — clustered, the way they actually grow.
+  const hutCenter = { x: -28, z: -10 };
+  for (let i = 0; i < 7; i++) {
+    const tree = buildCypress();
+    const r = 4 + Math.random() * 5;
+    const a = Math.random() * Math.PI * 2;
+    const tx = hutCenter.x + Math.cos(a) * r;
+    const tz = hutCenter.z + Math.sin(a) * r;
+    tree.position.set(tx, sampleHeight(tx, tz, heights), tz);
+    tree.scale.setScalar(0.8 + Math.random() * 0.5);
+    scene.add(tree);
+  }
+  // Two more cypresses near the wreck — they grow where there's water.
+  for (let i = 0; i < 2; i++) {
+    const tree = buildCypress();
+    const tx = wreckX + (Math.random() - 0.5) * 4;
+    const tz = wreckZ - 6 + Math.random() * 3;
+    tree.position.set(tx, sampleHeight(tx, tz, heights), tz);
+    tree.scale.setScalar(0.7 + Math.random() * 0.4);
+    scene.add(tree);
+  }
+
+  // Memorial flag poles near the border — Kurdish/Iranian custom for marking
+  // places where things happened. Three different cloth colors. Quiet detail.
+  const flagSpots: [number, number, number][] = [
+    [trackXAt(BORDER_Z - 6) + 6, BORDER_Z - 6, 0xc0392b], // red
+    [trackXAt(BORDER_Z - 12) - 7, BORDER_Z - 12, 0xe6e3d4], // bone-white
+    [trackXAt(BORDER_Z - 3) - 5, BORDER_Z - 3, 0x356a4d], // green
+  ];
+  for (const [fx, fz, color] of flagSpots) {
+    const pole = buildFlagPole(color);
+    pole.position.set(fx, sampleHeight(fx, fz, heights), fz);
+    pole.rotation.y = Math.random() * Math.PI;
+    scene.add(pole);
+  }
 
   // Audio. Init now (Drive click already provided the user gesture for AudioContext).
   const audio = new AudioSystem(kind);

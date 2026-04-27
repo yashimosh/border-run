@@ -87,14 +87,29 @@ export function buildTerrainMesh(heights: number[][], isTrack: boolean[][]): THR
 
   const scrub = new THREE.Color(0x6e6555);
   const dirt = new THREE.Color(0xa68a5b);
+  const rut = new THREE.Color(0x6b5436); // darker, worn ruts down the centerline
+
+  // Recompute the track centerline x for each z so we can shade the rut.
+  const trackXAt = (z: number) => {
+    const zNorm = z / TERRAIN_SIZE;
+    return Math.sin(zNorm * 2.4) * 12 + Math.sin(zNorm * 5.7) * 3;
+  };
 
   for (let i = 0; i < res; i++) {
     for (let j = 0; j < res; j++) {
       const idx = j * res + i;
-      // See worktree DECISIONS notes — flip j to align with rotated heightfield body.
       const jFlipped = res - 1 - j;
       pos.setY(idx, heights[i][jFlipped]);
-      const c = isTrack[i][jFlipped] ? dirt : scrub;
+
+      let c: THREE.Color;
+      if (isTrack[i][jFlipped]) {
+        const x = (i / (res - 1) - 0.5) * TERRAIN_SIZE;
+        const z = ((res - 1 - jFlipped) / (res - 1) - 0.5) * TERRAIN_SIZE;
+        const dist = Math.abs(x - trackXAt(z));
+        c = dist < 1.4 ? rut : dirt;
+      } else {
+        c = scrub;
+      }
       colors[idx * 3] = c.r;
       colors[idx * 3 + 1] = c.g;
       colors[idx * 3 + 2] = c.b;
@@ -121,17 +136,27 @@ export function sampleHeight(x: number, z: number, heights: number[][]): number 
   return heights[i][j];
 }
 
-// — Sky gradient. Cool dust-blue at top, warmer at horizon.
+// — Sky gradient with a soft cloud band. Dawn light below the cloud line.
 export function buildSkyGradient(): THREE.Texture {
   const c = document.createElement("canvas");
-  c.width = 2; c.height = 256;
+  c.width = 2; c.height = 512;
   const ctx = c.getContext("2d")!;
-  const grad = ctx.createLinearGradient(0, 0, 0, 256);
-  grad.addColorStop(0.0, "#3a4452");
-  grad.addColorStop(0.55, "#7d8492");
-  grad.addColorStop(1.0, "#9aa0a8");
+  // Base gradient.
+  const grad = ctx.createLinearGradient(0, 0, 0, 512);
+  grad.addColorStop(0.00, "#2f3a48");
+  grad.addColorStop(0.40, "#5a6470");
+  grad.addColorStop(0.70, "#8b8c8e");
+  grad.addColorStop(0.85, "#b09a82"); // warmer cloud underbelly catching dawn
+  grad.addColorStop(1.00, "#9aa0a8");
   ctx.fillStyle = grad;
-  ctx.fillRect(0, 0, 2, 256);
+  ctx.fillRect(0, 0, 2, 512);
+  // Cloud band: a slightly lighter horizontal stripe with feather.
+  const band = ctx.createLinearGradient(0, 360, 0, 430);
+  band.addColorStop(0.00, "rgba(202,196,184,0)");
+  band.addColorStop(0.50, "rgba(214,206,192,0.55)");
+  band.addColorStop(1.00, "rgba(202,196,184,0)");
+  ctx.fillStyle = band;
+  ctx.fillRect(0, 360, 2, 70);
   const tex = new THREE.CanvasTexture(c);
   tex.colorSpace = THREE.SRGBColorSpace;
   tex.mapping = THREE.EquirectangularReflectionMapping;
@@ -297,4 +322,84 @@ export function buildBorderLine(): THREE.Line {
   const line = new THREE.Line(geo, new THREE.LineDashedMaterial({ color: 0xc0392b, dashSize: 1.2, gapSize: 0.6 }));
   line.computeLineDistances();
   return line;
+}
+
+// — Cairn (stones piled by passersby on mountain passes — Kurdish/Iranian custom).
+export function buildCairn(): THREE.Group {
+  const g = new THREE.Group();
+  const stoneMat = new THREE.MeshStandardMaterial({ color: 0x6b6155, roughness: 1.0, flatShading: true });
+  const count = 6 + Math.floor(Math.random() * 4);
+  let y = 0;
+  for (let i = 0; i < count; i++) {
+    const r = 0.32 - i * 0.03 + (Math.random() - 0.5) * 0.05;
+    const stone = new THREE.Mesh(new THREE.DodecahedronGeometry(r, 0), stoneMat);
+    stone.position.set((Math.random() - 0.5) * 0.1, y + r * 0.7, (Math.random() - 0.5) * 0.1);
+    stone.rotation.set(Math.random() * Math.PI, Math.random() * Math.PI, Math.random() * Math.PI);
+    stone.castShadow = true;
+    g.add(stone);
+    y += r * 1.3;
+  }
+  return g;
+}
+
+// — Wrecked truck. A previous run that didn't make it. Tells a story.
+export function buildWreck(): THREE.Group {
+  const g = new THREE.Group();
+  const rust = new THREE.MeshStandardMaterial({ color: 0x5a3a26, roughness: 0.95, flatShading: true });
+  const dark = new THREE.MeshStandardMaterial({ color: 0x1f1814, roughness: 0.9 });
+  // Tipped on its side. Body.
+  const body = new THREE.Mesh(new THREE.BoxGeometry(1.7, 0.85, 3.3), rust);
+  body.position.y = 0.85;
+  body.rotation.z = -Math.PI / 2.4; // half-tipped
+  body.castShadow = true;
+  g.add(body);
+  // Cabin.
+  const cabin = new THREE.Mesh(new THREE.BoxGeometry(1.6, 0.95, 1.8), rust);
+  cabin.position.set(0.65, 1.55, -0.2);
+  cabin.rotation.z = -Math.PI / 2.4;
+  cabin.castShadow = true;
+  g.add(cabin);
+  // A wheel up in the air.
+  const wheel = new THREE.Mesh(new THREE.CylinderGeometry(0.4, 0.4, 0.32, 14), dark);
+  wheel.rotation.set(0, 0, Math.PI / 2);
+  wheel.position.set(-0.5, 1.6, 1.0);
+  g.add(wheel);
+  return g;
+}
+
+// — Cypress (tall thin tree common in the region). Two cones stacked.
+export function buildCypress(): THREE.Group {
+  const g = new THREE.Group();
+  const trunk = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.08, 0.12, 0.6, 6),
+    new THREE.MeshStandardMaterial({ color: 0x2a2218, roughness: 1.0 })
+  );
+  trunk.position.y = 0.3; trunk.castShadow = true; g.add(trunk);
+  const foliageMat = new THREE.MeshStandardMaterial({ color: 0x2d3a26, roughness: 1.0, flatShading: true });
+  const lower = new THREE.Mesh(new THREE.ConeGeometry(0.55, 2.2, 6), foliageMat);
+  lower.position.y = 1.7; lower.castShadow = true; g.add(lower);
+  const upper = new THREE.Mesh(new THREE.ConeGeometry(0.32, 1.4, 6), foliageMat);
+  upper.position.y = 3.0; upper.castShadow = true; g.add(upper);
+  return g;
+}
+
+// — Memorial flag pole. Tall thin post with a colored cloth tied near the top.
+// Marks dangerous spots / honors people lost on the route. Quiet detail.
+export function buildFlagPole(color: number): THREE.Group {
+  const g = new THREE.Group();
+  const woodMat = new THREE.MeshStandardMaterial({ color: 0x2a2218, roughness: 0.95 });
+  const post = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.05, 3.2, 6), woodMat);
+  post.position.y = 1.6; post.castShadow = true; g.add(post);
+  // Cloth: a thin rectangle, drooping slightly via rotation.
+  const clothMat = new THREE.MeshStandardMaterial({ color, roughness: 1.0, side: THREE.DoubleSide });
+  const cloth = new THREE.Mesh(new THREE.PlaneGeometry(0.55, 0.85), clothMat);
+  cloth.position.set(0.3, 2.8, 0);
+  cloth.rotation.set(0.05, Math.PI / 2, 0.18);
+  cloth.castShadow = true;
+  g.add(cloth);
+  // Knot near the top of the post.
+  const knot = new THREE.Mesh(new THREE.SphereGeometry(0.07, 6, 6), clothMat);
+  knot.position.set(0, 3.05, 0);
+  g.add(knot);
+  return g;
 }

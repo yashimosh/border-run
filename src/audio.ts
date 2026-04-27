@@ -5,22 +5,23 @@
 import type { VehicleKind } from "./vehicle";
 
 interface AudioConfig {
-  // Engine fundamental at idle, in Hz.
   idleHz: number;
-  // Hz added at full throttle on top of idle.
   throttleSweep: number;
-  // Hz added per (m/s) of road speed (mechanical-coupled).
   speedHz: number;
-  // Engine roughness amount (brown-noise layer level).
   roughness: number;
-  // Lowpass cutoff at idle / max throttle. (Hz)
   filterMin: number;
   filterMax: number;
+  // How deep the chug AM goes (0..1). Diesels chug more than gas.
+  chugDepth: number;
+  // Engine-mount wobble depth in Hz (random/LFO modulation on fundamental).
+  wobbleHz: number;
 }
 
 const PROFILES: Record<VehicleKind, AudioConfig> = {
-  fj40: { idleHz: 78, throttleSweep: 130, speedHz: 1.8, roughness: 0.18, filterMin: 380, filterMax: 1700 },
-  hj75: { idleHz: 56, throttleSweep: 100, speedHz: 1.4, roughness: 0.32, filterMin: 280, filterMax: 1300 },
+  // FJ40: 2F gas engine — wheezier, smoother, faster putt.
+  fj40: { idleHz: 78, throttleSweep: 130, speedHz: 1.8, roughness: 0.18, filterMin: 380, filterMax: 1700, chugDepth: 0.22, wobbleHz: 1.6 },
+  // HJ75: B-series diesel — slower, deeper chug, rattlier.
+  hj75: { idleHz: 56, throttleSweep: 100, speedHz: 1.4, roughness: 0.32, filterMin: 280, filterMax: 1300, chugDepth: 0.38, wobbleHz: 1.0 },
 };
 
 export class AudioSystem {
@@ -33,6 +34,12 @@ export class AudioSystem {
   private osc3!: OscillatorNode;
   private engineNoiseGain!: GainNode;
   private engineNoise!: AudioBufferSourceNode;
+  private chugLFO!: OscillatorNode;
+  private chugDepth!: GainNode;
+  private chugBias!: ConstantSourceNode;
+  private chugAM!: GainNode;
+  private wobbleLFO!: OscillatorNode;
+  private wobbleDepth!: GainNode;
   private windGain!: GainNode;
   private windFilter!: BiquadFilterNode;
   private wind!: AudioBufferSourceNode;
@@ -66,7 +73,7 @@ export class AudioSystem {
     this.engineFilter.frequency.value = profile.filterMin;
     this.engineFilter.Q.value = 0.6;
 
-    // Three oscillators stacked: fundamental + 2nd harmonic (firing) + 3rd (rough).
+    // Three oscillators stacked: fundamental + 2nd harmonic (firing) + sub (chug).
     this.osc1 = ctx.createOscillator();
     this.osc1.type = "sawtooth";
     this.osc1.frequency.value = profile.idleHz;
@@ -75,16 +82,43 @@ export class AudioSystem {
     this.osc2 = ctx.createOscillator();
     this.osc2.type = "square";
     this.osc2.frequency.value = profile.idleHz * 2;
+    this.osc2.detune.value = -7; // worn engine: not quite in tune. The humor.
     const g2 = ctx.createGain(); g2.gain.value = 0.18;
 
     this.osc3 = ctx.createOscillator();
     this.osc3.type = "sawtooth";
-    this.osc3.frequency.value = profile.idleHz * 0.5; // sub-octave for diesel chug
+    this.osc3.frequency.value = profile.idleHz * 0.5;
+    this.osc3.detune.value = 4; // also slightly off, opposite direction
     const g3 = ctx.createGain(); g3.gain.value = 0.22;
 
     this.osc1.connect(g1).connect(this.engineFilter);
     this.osc2.connect(g2).connect(this.engineFilter);
     this.osc3.connect(g3).connect(this.engineFilter);
+
+    // Engine-mount wobble: slow LFO modulating the fundamental ±wobbleHz.
+    // Sells the "tired old motor that has seen things" character.
+    this.wobbleLFO = ctx.createOscillator();
+    this.wobbleLFO.type = "sine";
+    this.wobbleLFO.frequency.value = profile.wobbleHz;
+    this.wobbleDepth = ctx.createGain();
+    this.wobbleDepth.gain.value = 1.8; // ±1.8 Hz wobble at idle
+    this.wobbleLFO.connect(this.wobbleDepth);
+    this.wobbleDepth.connect(this.osc1.frequency);
+    this.wobbleDepth.connect(this.osc2.frequency);
+
+    // Chug tremolo: AM at engine_hz/4. Gives the actual putt-putt-putt rhythm.
+    // Implementation: chugAM.gain = chugBias + chugLFO * chugDepth, then route audio through chugAM.
+    this.chugLFO = ctx.createOscillator();
+    this.chugLFO.type = "sine";
+    this.chugLFO.frequency.value = profile.idleHz / 4;
+    this.chugDepth = ctx.createGain();
+    this.chugDepth.gain.value = profile.chugDepth;
+    this.chugBias = ctx.createConstantSource();
+    this.chugBias.offset.value = 1 - profile.chugDepth;
+    this.chugAM = ctx.createGain();
+    this.chugAM.gain.value = 0; // start silent; bias + LFO will set it
+    this.chugBias.connect(this.chugAM.gain);
+    this.chugLFO.connect(this.chugDepth).connect(this.chugAM.gain);
 
     // Brown noise layer for mechanical roughness.
     this.engineNoise = ctx.createBufferSource();
@@ -94,12 +128,16 @@ export class AudioSystem {
     this.engineNoiseGain.gain.value = profile.roughness;
     this.engineNoise.connect(this.engineNoiseGain).connect(this.engineFilter);
 
-    this.engineFilter.connect(this.engineGain).connect(this.master);
+    // Route engine through chug AM, then steady gain, then master.
+    this.engineFilter.connect(this.chugAM).connect(this.engineGain).connect(this.master);
 
     this.osc1.start();
     this.osc2.start();
     this.osc3.start();
     this.engineNoise.start();
+    this.wobbleLFO.start();
+    this.chugLFO.start();
+    this.chugBias.start();
   }
 
   private buildWind() {
@@ -147,6 +185,11 @@ export class AudioSystem {
     this.osc1.frequency.setTargetAtTime(targetHz, t, 0.04);
     this.osc2.frequency.setTargetAtTime(targetHz * 2, t, 0.04);
     this.osc3.frequency.setTargetAtTime(targetHz * 0.5, t, 0.04);
+
+    // Chug rhythm tracks the engine — quarter the fundamental gives the putt-putt cadence.
+    this.chugLFO.frequency.setTargetAtTime(targetHz / 4, t, 0.06);
+    // Wobble eases off slightly under throttle (motor smooths out when working hard).
+    this.wobbleDepth.gain.setTargetAtTime(1.8 - this.throttleSmoothed * 0.9, t, 0.1);
 
     // Engine filter opens up with throttle.
     const cutoff = profile.filterMin + this.throttleSmoothed * (profile.filterMax - profile.filterMin);
