@@ -411,6 +411,16 @@ function init(kind: VehicleKind) {
     world.step(fixedStep, dt, 3);
     syncVehicleMeshes(vehicle);
 
+    // Brake lights — emissive intensity follows brake input.
+    const braking = keys.brake || keys.handbrake || (keys.back && Math.hypot(vehicle.chassisBody.velocity.x, vehicle.chassisBody.velocity.z) > 0.5);
+    for (const bl of vehicle.brakeLights) {
+      const m = bl.material as THREE.MeshStandardMaterial;
+      m.emissiveIntensity += ((braking ? 1.4 : 0.0) - m.emissiveIntensity) * Math.min(1, dt * 12);
+    }
+
+    // Steering wheel rotates ~3x the front-wheel angle.
+    vehicle.steeringWheel.rotation.y = steering * 3;
+
     // Audio update — derive throttle (signed), speed, and on-track from current state.
     const throttle = keys.fwd ? 1 : keys.back ? -1 : 0;
     const planarSpeed = Math.hypot(vehicle.chassisBody.velocity.x, vehicle.chassisBody.velocity.z);
