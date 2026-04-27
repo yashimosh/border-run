@@ -47,15 +47,28 @@
 
       .colophon { position: fixed; bottom: 12px; right: 14px; font-size: 10px; opacity: 0.4; }
       .colophon a { color: inherit; }
+
+      .picker { display: flex; gap: 12px; justify-content: center; margin-bottom: 16px; }
+      .picker label {
+        cursor: pointer; padding: 12px 14px; min-width: 130px;
+        border: 1px solid rgba(232,230,225,0.18); text-align: left;
+        font-size: 11px; line-height: 1.4; transition: border-color 200ms;
+      }
+      .picker label:hover { border-color: rgba(232,230,225,0.5); }
+      .picker input { display: none; }
+      .picker input:checked + .card { border-color: #e8e6e1; }
+      .picker .card { display: block; padding: 0; border: 1px solid transparent; transition: border-color 200ms; }
+      .picker .card .name { display: block; opacity: 0.95; letter-spacing: 0.04em; }
+      .picker .card .meta { display: block; opacity: 0.5; font-size: 10px; margin-top: 4px; }
     </style>
   </head>
   <body>
     <div id="stage"></div>
 
     <div class="hud tl">
-      <div><span class="k">slice</span> <span class="v">v0.1</span></div>
+      <div><span class="k">slice</span> <span class="v">v0.2</span></div>
       <div><span class="k">scene</span> <span class="v">border-01 / qandil ridge</span></div>
-      <div><span class="k">vehicle</span> <span class="v">FJ40 — '79</span></div>
+      <div><span class="k">vehicle</span> <span class="v" id="hud-vehicle">—</span></div>
     </div>
 
     <div class="hud tr">
@@ -65,13 +78,29 @@
     </div>
 
     <div class="hud bl">
-      <div><kbd>W</kbd> <kbd>A</kbd> <kbd>S</kbd> <kbd>D</kbd> drive · <kbd>Space</kbd> brake · <kbd>R</kbd> reset</div>
+      <div><kbd>W</kbd> <kbd>A</kbd> <kbd>S</kbd> <kbd>D</kbd> drive · <kbd>Shift</kbd> handbrake · <kbd>Space</kbd> brake · <kbd>R</kbd> reset</div>
     </div>
 
     <div id="title">
       <h1>Border Run</h1>
-      <p>An old Land Cruiser, a roof full of cans, and a line drawn by other people. The line doesn't move; you do.</p>
-      <button id="start">Start</button>
+      <p>Pick a truck. The line doesn't move; you do.</p>
+      <div class="picker">
+        <label>
+          <input type="radio" name="vehicle-choice" id="vehicle-choice" value="fj40" checked />
+          <span class="card">
+            <span class="name">FJ40 — '79</span>
+            <span class="meta">short wheelbase · agile · jerry cans on the roof</span>
+          </span>
+        </label>
+        <label>
+          <input type="radio" name="vehicle-choice" value="hj75" />
+          <span class="card">
+            <span class="name">HJ75 — '85</span>
+            <span class="meta">long pickup · heavier · cargo in the bed</span>
+          </span>
+        </label>
+      </div>
+      <button id="start">Drive</button>
     </div>
 
     <div id="event">— crossing —</div>

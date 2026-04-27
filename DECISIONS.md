@@ -77,6 +77,40 @@ Sky gradient (cool dust-blue → warmer horizon), low-angle sun behind the playe
 
 The line is marked by a wooden watchtower with a tin roof, off to one side, no light on. Reads as: somebody is here, even if no one is in it tonight. A formal checkpoint with gates would have changed the register entirely (state-power-as-obstacle, GTA-cop framing). The empty tower is closer to what the corridor actually feels like.
 
+## 2026-04-27 — v0.2: RaycastVehicle replaces arcade box
+
+The single dynamic Box body is gone. Vehicles now use cannon-es `RaycastVehicle` with 4 wheels, real suspension (stiffness 32, rest 0.32, damping comp 4.5 / relax 2.4), per-wheel friction slip, and an axle-local steering vector. Front wheels steer, rear wheels drive — rear-wheel-drive feel. Brake force per wheel; handbrake on Shift biases the rear (the slide tool).
+
+Why now: the box-with-forces model couldn't express any of the things that make rough-terrain driving feel real — body roll, suspension travel, wheels hitting bumps independently, weight transfer under braking. The slice has to feel like *the truck and the terrain are arguing*, not like *the player is moving a cursor*. That distinction only happens with raycast wheels.
+
+Tradeoff: cannon's RaycastVehicle has well-documented quirks (axle/forward axis indexing, sliding rotational speed, occasional wheel-tunnel-through-terrain at high speed). Accepted; will tune as the corridor expands.
+
+## 2026-04-27 — v0.2: Two vehicles, picked at start
+
+FJ40 (short, agile, mass 1300, engine force 2200) and HJ75 pickup (long, heavier, mass 1700, engine force 2600, lower max steer). Different feel: FJ40 turns sharper, HJ75 carries weight better but understeers in tight curves. Pick at the title overlay; keyboard shortcut `1`/`2` also works.
+
+The HJ75 is the "Mowashera" — the long-bed pickup that does the bulk-cargo runs in the actual corridor. FJ40 is the iconic image but HJ75 is the workhorse. Having both lets the player feel which they want for which job. Future: the bed cargo on the HJ75 should physics-out the same way the roof cans did in v0.1 (deferred).
+
+## 2026-04-27 — v0.2: Dirt track baked into terrain
+
+The heightfield now has a sine-curved track running -z to +z, graded flatter than surrounding terrain and shaded sandy-tan via vertex colors against the scrub-brown of the rest. No UI arrow, no waypoint marker, no minimap. The route reads because it's *graded*. Anything off-track is rougher.
+
+Why this matters: the slice's politics rests on the player feeling that the line is something *imposed* on the landscape and the route is something *worn* into it. A waypoint UI would say "go here" — an authored track says "people have gone here, repeatedly, before you". Different texture, same direction.
+
+## 2026-04-27 — v0.2: World gets bigger and more articulated
+
+Map is now 300m × 300m (was 200m). Added:
+- 90 instanced rocks scattered off the track (low-poly dodecahedrons, sand-rust)
+- 220 instanced scrub bushes (cones, dark olive)
+- A stone smuggler's hut on the south side, doorway as a void
+- Distant ridge on the +z horizon (more articulated silhouette)
+
+Instanced meshes for rocks/scrub keep draw calls flat. Density tuned by eye — sparse enough to stay readable, dense enough that the world doesn't feel like a debug scene.
+
+## 2026-04-27 — v0.2: Cargo loop temporarily gone
+
+The roof-rack jerry cans + tarp block as physics bodies came out in the rewrite. They'll come back in v0.3 with proper attachment to the chosen vehicle (FJ40 roof rack vs HJ75 bed). The consequence loop is too important to leave half-implemented; better to have it absent than buggy.
+
 ## Open — to resolve when slice is reviewed
 
 - Camera: chase cam works for slice; isometric / fixed angles per scene might fit the documentary register better. Try both before locking.
