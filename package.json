@@ -13,9 +13,18 @@
   },
   "dependencies": {
     "cannon-es": "0.20.0",
-    "three": "0.168.0"
+    "gsap": "^3.12.5",
+    "howler": "^2.2.4",
+    "lil-gui": "^0.19.2",
+    "postprocessing": "^6.36.4",
+    "stats.js": "^0.17.0",
+    "three": "0.168.0",
+    "three-stdlib": "^2.32.2",
+    "tone": "^15.0.4"
   },
   "devDependencies": {
+    "@types/howler": "^2.2.11",
+    "@types/stats.js": "^0.17.3",
     "@types/three": "0.168.0",
     "typescript": "5.5.4",
     "vite": "5.4.10"

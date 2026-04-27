@@ -4,6 +4,7 @@
 
 import * as THREE from "three";
 import * as CANNON from "cannon-es";
+import { RoomEnvironment } from "three-stdlib";
 import {
   TERRAIN_SIZE, TERRAIN_RES, BORDER_Z,
   buildHeights, buildHeightfieldBody, buildTerrainMesh, sampleHeight,
@@ -19,11 +20,20 @@ import { SPECS, VehicleKind, buildVehicle, syncVehicleMeshes, Vehicle } from "./
 import { AudioSystem } from "./audio";
 import { Radio, DEFAULT_STATIONS } from "./radio";
 import { ParticleSystem } from "./particles";
+import { createDevtools } from "./devtools";
+import { createPostFx } from "./postfx";
+import gsap from "gsap";
+import { Howl } from "howler";
 
 type Keys = {
   fwd: boolean; back: boolean; left: boolean; right: boolean;
   brake: boolean; handbrake: boolean;
 };
+
+// Howler-loaded door-close SFX. Generated as a base64 WAV at build time so
+// we don't ship an actual audio file but can still demo the Howler integration.
+const DOOR_CLICK_DATAURI = makeDoorClickDataURI();
+const doorClickHowl = new Howl({ src: [DOOR_CLICK_DATAURI], format: ["wav"], volume: 0.7 });
 
 function boot() {
   const start = document.getElementById("start") as HTMLButtonElement | null;
@@ -35,8 +45,10 @@ function boot() {
   };
 
   start?.addEventListener("click", () => {
-    title?.classList.add("hidden");
-    init(readChoice());
+    doorClickHowl.play();
+    // GSAP intro tween: fade title, then start the engine.
+    gsap.to(title!, { opacity: 0, duration: 0.4, onComplete: () => title?.classList.add("hidden") });
+    gsap.delayedCall(0.2, () => init(readChoice()));
   }, { once: true });
 
   // Allow keyboard shortcut: 1 picks FJ40, 2 picks HJ75. Either also dismisses title.
@@ -58,22 +70,40 @@ if (document.readyState === "loading") {
 
 function init(kind: VehicleKind) {
   const stage = document.getElementById("stage")!;
-  const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
+  const renderer = new THREE.WebGLRenderer({
+    antialias: false, // disabled — we use postprocessing-based smoothing
+    powerPreference: "high-performance",
+    stencil: false,
+    depth: true,
+  });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.75));
   renderer.setSize(window.innerWidth, window.innerHeight);
   renderer.setClearColor(0x0b0b0c);
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  renderer.toneMapping = THREE.NoToneMapping; // postfx ToneMappingEffect handles this
   stage.appendChild(renderer.domElement);
+
+  const dev = createDevtools();
 
   const scene = new THREE.Scene();
   scene.background = buildSkyGradient();
   scene.fog = new THREE.Fog(0x9aa0a8, 100, 320);
 
+  // IBL for soft fill on chrome/glass — three-stdlib's RoomEnvironment generates
+  // an indoor-ish PMREM probe. Good enough for non-PBR-realism, helps polished
+  // materials read better.
+  const pmrem = new THREE.PMREMGenerator(renderer);
+  scene.environment = pmrem.fromScene(RoomEnvironment(), 0.04).texture;
+
   const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 800);
 
+  // Postprocessing — bloom, vignette, tone mapping. Replaces renderer.render.
+  const postfx = createPostFx(renderer, scene, camera);
+
   // Lighting — cold dawn.
-  scene.add(new THREE.HemisphereLight(0xa9b4c4, 0x2a2620, 0.7));
+  const hemi = new THREE.HemisphereLight(0xa9b4c4, 0x2a2620, 0.7);
+  scene.add(hemi);
   const sun = new THREE.DirectionalLight(0xffd9a8, 0.8);
   sun.position.set(80, 50, -60);
   sun.castShadow = true;
@@ -368,9 +398,15 @@ function init(kind: VehicleKind) {
   // Resize.
   window.addEventListener("resize", () => {
     renderer.setSize(window.innerWidth, window.innerHeight);
+    postfx.setSize(window.innerWidth, window.innerHeight);
     camera.aspect = window.innerWidth / window.innerHeight;
     camera.updateProjectionMatrix();
   });
+
+  // GSAP intro: nudge FOV from 90 → 60 over the first 1.4s for a "settling in" feel.
+  camera.fov = 90;
+  camera.updateProjectionMatrix();
+  gsap.to(camera, { fov: 60, duration: 1.4, ease: "power2.out", onUpdate: () => camera.updateProjectionMatrix() });
 
   // Loop.
   const clock = new THREE.Clock();
@@ -523,8 +559,60 @@ function init(kind: VehicleKind) {
       flash("returned to start");
     }
 
-    renderer.render(scene, camera);
+    // Apply live tunables (dev panel — silent if dev panel hidden).
+    if (scene.fog && (scene.fog as THREE.Fog).near !== undefined) {
+      (scene.fog as THREE.Fog).near = dev.tunables.fogNear;
+      (scene.fog as THREE.Fog).far = dev.tunables.fogFar;
+    }
+    sun.intensity = dev.tunables.sunIntensity;
+    hemi.intensity = dev.tunables.hemiIntensity;
+    camOffsetLocal.y = dev.tunables.cameraHeight;
+    camOffsetLocal.z = -dev.tunables.cameraDistance;
+    postfx.bloom.intensity = dev.tunables.bloomIntensity;
+    (postfx.vignette as any).darkness = dev.tunables.vignetteDarkness;
+
+    dev.begin();
+    postfx.render(dt);
+    dev.end();
     requestAnimationFrame(tick);
   }
   tick();
+}
+
+// Generate a tiny synthesized "door close" WAV as a data URI for Howler to play.
+// 0.18s, descending tone + noise tail. Lightweight, no external asset.
+function makeDoorClickDataURI(): string {
+  const sampleRate = 22050;
+  const samples = Math.floor(sampleRate * 0.18);
+  const data = new Int16Array(samples);
+  for (let i = 0; i < samples; i++) {
+    const t = i / sampleRate;
+    const env = Math.exp(-t * 24);
+    const tone = Math.sin(2 * Math.PI * (180 - t * 600) * t) * 0.4;
+    const noise = (Math.random() * 2 - 1) * 0.15 * Math.exp(-t * 18);
+    data[i] = Math.round((tone + noise) * env * 32000);
+  }
+  // Build a 16-bit mono PCM WAV.
+  const buffer = new ArrayBuffer(44 + data.byteLength);
+  const view = new DataView(buffer);
+  const writeStr = (o: number, s: string) => { for (let i = 0; i < s.length; i++) view.setUint8(o + i, s.charCodeAt(i)); };
+  writeStr(0, "RIFF");
+  view.setUint32(4, 36 + data.byteLength, true);
+  writeStr(8, "WAVE");
+  writeStr(12, "fmt ");
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * 2, true);
+  view.setUint16(32, 2, true);
+  view.setUint16(34, 16, true);
+  writeStr(36, "data");
+  view.setUint32(40, data.byteLength, true);
+  new Int16Array(buffer, 44).set(data);
+  // Base64 encode.
+  let binary = "";
+  const bytes = new Uint8Array(buffer);
+  for (let i = 0; i < bytes.byteLength; i++) binary += String.fromCharCode(bytes[i]);
+  return "data:audio/wav;base64," + btoa(binary);
 }

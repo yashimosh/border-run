@@ -3,6 +3,8 @@
 // I picked would override your taste. Drop your own MP3s in public/radio/
 // and list them in DEFAULT_STATIONS below.
 
+import * as Tone from "tone";
+
 export type ProceduralMode = "drift" | "song-slow" | "song-mid";
 
 export interface RadioStation {
@@ -175,6 +177,19 @@ export class Radio {
     if (!this.hudEl) return;
     this.hudEl.classList.add("tuning");
     setTimeout(() => this.hudEl?.classList.remove("tuning"), 320);
+    // Tone.js tune-in beep: brief synth + filter sweep, sounds like a tuner clicking through.
+    try {
+      Tone.start();
+      const synth = new Tone.Synth({
+        oscillator: { type: "square" },
+        envelope: { attack: 0.005, decay: 0.08, sustain: 0, release: 0.05 },
+      });
+      const filt = new Tone.Filter({ type: "bandpass", frequency: 1200, Q: 4 });
+      synth.chain(filt, Tone.getDestination());
+      synth.volume.value = -22;
+      synth.triggerAttackRelease("C5", 0.05);
+      setTimeout(() => { synth.dispose(); filt.dispose(); }, 250);
+    } catch {}
   }
 }
 
