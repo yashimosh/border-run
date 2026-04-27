@@ -1,9 +1,9 @@
-// Feedback — small modal that opens a mailto: with a prefilled body, also
-// copies the formatted message to clipboard as a fallback. No backend, no
-// secrets, no infra. Upgrade path: replace `submit()` with a fetch to a CF
-// Worker that forwards to Telegram/email when feedback volume warrants.
+// Feedback — small modal that POSTs to /api/feedback. If the server endpoint
+// isn't configured (e.g. RESEND_API_KEY missing), falls back to mailto + clipboard.
+// The endpoint is served by the same container (server.js) so no CORS.
 
 const TARGET_EMAIL = "yashar@yashimosh.com";
+const ENDPOINT = "/api/feedback";
 
 export function setupFeedback() {
   const openBtn = document.getElementById("fb-open");
@@ -64,17 +64,45 @@ export function setupFeedback() {
   sendBtn.addEventListener("click", async () => {
     const built = buildBody();
     if (!built) return;
-    // Always copy to clipboard first as a guaranteed fallback.
+    sendBtn.setAttribute("disabled", "true");
+    flash(toast, "sending…");
+
+    try {
+      const res = await fetch(ENDPOINT, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: built.name,
+          message: built.msg,
+          url: location.href,
+          ua: navigator.userAgent,
+        }),
+      });
+      if (res.ok) {
+        flash(toast, "sent — thanks");
+        msgInput.value = "";
+        nameInput.value = "";
+        setTimeout(close, 700);
+        return;
+      }
+      // Server responded but couldn't send (e.g. 503 not configured) — fall through to mailto.
+      const data = await res.json().catch(() => ({}));
+      console.warn("feedback endpoint:", res.status, data);
+    } catch (err) {
+      console.warn("feedback fetch failed:", err);
+    } finally {
+      sendBtn.removeAttribute("disabled");
+    }
+
+    // Fallback: copy to clipboard + open mailto.
     try { await navigator.clipboard.writeText(`Subject: ${built.subject}\n\n${built.body}`); } catch {}
-    const mailto = `mailto:${TARGET_EMAIL}?subject=${encodeURIComponent(built.subject)}&body=${encodeURIComponent(built.body)}`;
-    window.location.href = mailto;
-    flash(toast, "opening your mail client (or paste from clipboard)");
-    // Clear and close after a short delay.
+    window.location.href = `mailto:${TARGET_EMAIL}?subject=${encodeURIComponent(built.subject)}&body=${encodeURIComponent(built.body)}`;
+    flash(toast, "couldn't reach server — opening mail client / copied to clipboard");
     setTimeout(() => {
       msgInput.value = "";
       nameInput.value = "";
       close();
-    }, 800);
+    }, 1400);
   });
 }
 

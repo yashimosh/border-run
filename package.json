@@ -9,20 +9,25 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
-    "preview": "vite preview --host 0.0.0.0 --port 4321"
+    "preview": "vite preview --host 0.0.0.0 --port 4321",
+    "start": "node server.js"
   },
   "dependencies": {
     "cannon-es": "0.20.0",
+    "dotenv": "^16.4.5",
+    "express": "^4.21.0",
     "gsap": "^3.12.5",
     "howler": "^2.2.4",
     "lil-gui": "^0.19.2",
     "postprocessing": "^6.36.4",
+    "resend": "^4.0.1",
     "stats.js": "^0.17.0",
     "three": "0.168.0",
     "three-stdlib": "^2.32.2",
     "tone": "^15.0.4"
   },
   "devDependencies": {
+    "@types/express": "^4.17.21",
     "@types/howler": "^2.2.11",
     "@types/stats.js": "^0.17.3",
     "@types/three": "0.168.0",
