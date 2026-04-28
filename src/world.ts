@@ -233,12 +233,14 @@ export function buildTerrainMesh(heights: number[][], isTrack: boolean[][]): THR
   geo.setAttribute("color", new THREE.BufferAttribute(colors, 3));
   geo.computeVertexNormals();
 
-  const mat = new THREE.MeshStandardMaterial({
+  // DEBUG: MeshBasicMaterial — no light/IBL interaction. If colors STILL read
+  // as cream, the culprit is fog or postprocessing, not lighting.
+  const mat = new THREE.MeshBasicMaterial({
     vertexColors: true,
-    roughness: 0.95,
-    metalness: 0.0,
   });
-  return new THREE.Mesh(geo, mat);
+  const mesh = new THREE.Mesh(geo, mat);
+  (window as any).__terrain = mesh;
+  return mesh;
 }
 
 export function sampleHeight(x: number, z: number, heights: number[][]): number {
