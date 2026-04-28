@@ -344,8 +344,9 @@ function init(kind: VehicleKind) {
     props.push(spawnBarrel(world, scene, new THREE.Vector3(bx, by, bz)));
   }
 
-  // Birds — bigger flock for sky presence.
-  const birds = new BirdFlock(scene, TERRAIN_SIZE / 2 + 20, 32);
+  // Birds — bigger flock for sky presence. Lower cruise altitude so they
+  // appear above the truck more often, not way overhead.
+  const birds = new BirdFlock(scene, TERRAIN_SIZE / 2 + 20, 36);
 
   // Atmospheric dust haze — drifting low-alpha particles for the dawn corridor feel.
   const dust2 = new DustHaze(scene, TERRAIN_SIZE * 0.9, 80);
@@ -453,9 +454,11 @@ function init(kind: VehicleKind) {
   // Vehicle.
   const spec = SPECS[kind];
   // Spawn at the south end of the track, aligned with the track centerline.
+  // Drop from above so the truck lands cleanly on the road, not wedged in
+  // a heightfield edge.
   const spawnZ = -135;
   const spawnX = Math.sin((spawnZ / TERRAIN_SIZE) * 2.4) * 12 + Math.sin((spawnZ / TERRAIN_SIZE) * 5.7) * 3;
-  const spawnY = sampleHeight(spawnX, spawnZ, heights) + 4;
+  const spawnY = sampleHeight(spawnX, spawnZ, heights) + 1.2; // just above the terrain — wheels catch instantly
   const vehicle = buildVehicle(spec, world, new CANNON.Vec3(spawnX, spawnY, spawnZ));
   scene.add(vehicle.chassisMesh);
   for (const w of vehicle.wheelMeshes) scene.add(w);
@@ -663,7 +666,9 @@ function init(kind: VehicleKind) {
     const dx = e.clientX - lastMouse.x;
     const dy = e.clientY - lastMouse.y;
     photoOrbit.theta -= dx * 0.005;
-    photoOrbit.phi = Math.max(0.1, Math.min(Math.PI - 0.1, photoOrbit.phi - dy * 0.005));
+    // Clamp phi to horizon-only — never go below terrain.
+    // 0.18 ≈ 10° from straight up; π/2 - 0.05 ≈ slightly above horizon.
+    photoOrbit.phi = Math.max(0.18, Math.min(Math.PI / 2 - 0.05, photoOrbit.phi - dy * 0.005));
     lastMouse = { x: e.clientX, y: e.clientY };
   });
   window.addEventListener("wheel", (e) => {

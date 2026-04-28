@@ -136,7 +136,7 @@ export class BirdFlock {
   private wanderW = 0.4;
   private avoidTruckR = 14;
   private avoidTruckW = 5.0;
-  private cruiseAltitude = 28;
+  private cruiseAltitude = 18;
   private altitudeSpring = 0.5;
 
   constructor(scene: THREE.Scene, bounds: number, count = 16) {
