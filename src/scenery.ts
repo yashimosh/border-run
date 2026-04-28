@@ -56,6 +56,49 @@ export function buildLimestoneSlab(scale = 1): THREE.Group {
   return g;
 }
 
+// — Juniper / mountain pine: tall thin conifer for the higher slopes.
+// Reads at distance as the dark vertical strokes that signal "mountainside forest".
+export function buildJuniper(): THREE.Group {
+  const g = new THREE.Group();
+  const trunk = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.08, 0.14, 1.0, 6),
+    new THREE.MeshStandardMaterial({ color: 0x2a1f15, roughness: 1.0 }),
+  );
+  trunk.position.y = 0.5; trunk.castShadow = true; g.add(trunk);
+  const foliageMat = new THREE.MeshStandardMaterial({ color: 0x2d3a26, roughness: 1.0, flatShading: true });
+  // Three stacked cones, narrowing.
+  const cones = [
+    { r: 0.85, h: 2.4, y: 1.7 },
+    { r: 0.6, h: 1.6, y: 2.9 },
+    { r: 0.36, h: 0.9, y: 3.8 },
+  ];
+  for (const c of cones) {
+    const cone = new THREE.Mesh(new THREE.ConeGeometry(c.r, c.h, 7), foliageMat);
+    cone.position.y = c.y; cone.castShadow = true; g.add(cone);
+  }
+  return g;
+}
+
+// — Wild rose / scrub bush: small low foliage cluster, fills mid-range gaps.
+export function buildBush(): THREE.Group {
+  const g = new THREE.Group();
+  const foliageMat = new THREE.MeshStandardMaterial({ color: 0x4a4836, roughness: 1.0, flatShading: true });
+  const blobs = 2 + Math.floor(Math.random() * 2);
+  for (let i = 0; i < blobs; i++) {
+    const r = 0.35 + Math.random() * 0.3;
+    const blob = new THREE.Mesh(new THREE.IcosahedronGeometry(r, 0), foliageMat);
+    blob.position.set(
+      (Math.random() - 0.5) * 0.5,
+      r * 0.6,
+      (Math.random() - 0.5) * 0.5,
+    );
+    blob.scale.y = 0.7;
+    blob.castShadow = true;
+    g.add(blob);
+  }
+  return g;
+}
+
 // — Persian oak (Quercus brantii). Low, gnarled, spreading. Different from
 // the cypress — wider crown, shorter trunk, oak has presence as a landmark.
 export function buildPersianOak(): THREE.Group {

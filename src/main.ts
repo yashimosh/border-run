@@ -15,6 +15,7 @@ import {
 import {
   buildLimestoneSlab, buildPersianOak, buildStoneWall, buildStream,
   buildVillage, buildGoat, buildPylon, buildPowerLines,
+  buildJuniper, buildBush,
 } from "./scenery";
 import {
   spawnGoat, spawnBarrel, syncProps, BirdFlock, honk, Prop,
@@ -236,6 +237,35 @@ function init(kind: VehicleKind) {
     oak.position.set(ox, sampleHeight(ox, oz, heights), oz);
     oak.scale.setScalar(1.2);
     scene.add(oak);
+  }
+
+  // Junipers / mountain pines on the high slopes (z > 70) — dark vertical
+  // strokes against snow-cap white. Reject sites on the dirt track.
+  for (let i = 0; i < 60; i++) {
+    const jx = (Math.random() - 0.5) * (TERRAIN_SIZE - 30);
+    const jz = 70 + Math.random() * (TERRAIN_SIZE / 2 - 80);
+    if (Math.abs(jx - trackXLocal(jz)) < 7) continue; // off-track
+    const jy = sampleHeight(jx, jz, heights);
+    if (jy < 4 || jy > 28) continue; // skip sand pockets and snow line
+    const tree = buildJuniper();
+    tree.position.set(jx, jy, jz);
+    tree.scale.setScalar(0.7 + Math.random() * 0.6);
+    tree.rotation.y = Math.random() * Math.PI * 2;
+    scene.add(tree);
+  }
+
+  // Wild bushes — fill the mid-range. Scattered everywhere except on track.
+  for (let i = 0; i < 120; i++) {
+    const bx = (Math.random() - 0.5) * (TERRAIN_SIZE - 20);
+    const bz = (Math.random() - 0.5) * (TERRAIN_SIZE - 20);
+    if (Math.abs(bx - trackXLocal(bz)) < 5) continue;
+    const by = sampleHeight(bx, bz, heights);
+    if (by > 18) continue; // bushes don't grow on snow
+    const bush = buildBush();
+    bush.position.set(bx, by, bz);
+    bush.scale.setScalar(0.7 + Math.random() * 0.6);
+    bush.rotation.y = Math.random() * Math.PI * 2;
+    scene.add(bush);
   }
 
   // Dry-stone wall ruin — running along the south slope below the oak grove.
