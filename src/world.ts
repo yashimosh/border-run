@@ -96,7 +96,8 @@ export function buildHeights(): { heights: number[][]; isTrack: boolean[][] } {
 
       const tx = trackX(zNorm);
       const distToTrack = Math.abs(x - tx);
-      const onTrack = distToTrack < 4.0;
+      // Match the asphalt road mesh width (halfWidth 3.4m + shoulder 0.8m).
+      const onTrack = distToTrack < 3.6;
       const inTrackInfluence = distToTrack < 9.0;
 
       if (inTrackInfluence) {
