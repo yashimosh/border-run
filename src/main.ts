@@ -203,9 +203,9 @@ function init(kind: VehicleKind) {
   hut.rotation.y = 0.6;
   scene.add(hut);
 
-  // Scatter detail.
-  scene.add(buildRocks(heights, isTrack, 75));
-  scene.add(buildScrub(heights, isTrack, 260));
+  // Scatter detail — significantly increased density for Kurdistan forest-steppe feel.
+  scene.add(buildRocks(heights, isTrack, 220));
+  scene.add(buildScrub(heights, isTrack, 600));
   scene.add(buildDistantRidges());
 
   // Track helper for landmark placement.
@@ -236,18 +236,17 @@ function init(kind: VehicleKind) {
   }
 
   // Persian oak forest — Kurdistan's signature. Quercus brantii covers >50%
-  // of Zagros slopes; the slice should *look* forested. Dense scatter on
-  // accessible-altitude slopes (4-22m), sparse below + above.
-  // Use rejection sampling against the road shoulders.
-  for (let i = 0; i < 220; i++) {
+  // of Zagros slopes; the slice should *look* forested. 1200 attempts,
+  // ~600+ accept, very dense scatter.
+  for (let i = 0; i < 1200; i++) {
     const ox = (Math.random() - 0.5) * (TERRAIN_SIZE - 30);
     const oz = (Math.random() - 0.5) * (TERRAIN_SIZE - 30);
     if (Math.abs(ox - trackXLocal(oz)) < 7) continue;
     const oy = sampleHeight(ox, oz, heights);
-    if (oy < 1 || oy > 22) continue;
+    if (oy < 0.5 || oy > 22) continue;
     const oak = buildPersianOak();
     oak.position.set(ox, oy, oz);
-    oak.scale.setScalar(0.85 + Math.random() * 0.5);
+    oak.scale.setScalar(0.7 + Math.random() * 0.7);
     oak.rotation.y = Math.random() * Math.PI * 2;
     scene.add(oak);
   }
@@ -259,14 +258,13 @@ function init(kind: VehicleKind) {
     scene.add(oak);
   }
 
-  // Junipers / mountain pines on the high slopes (z > 70) — dark vertical
-  // strokes against snow-cap white. Reject sites on the dirt track.
-  for (let i = 0; i < 60; i++) {
+  // Junipers — dense on the high slopes (z > 50, altitude 4-26m).
+  for (let i = 0; i < 350; i++) {
     const jx = (Math.random() - 0.5) * (TERRAIN_SIZE - 30);
-    const jz = 70 + Math.random() * (TERRAIN_SIZE / 2 - 80);
-    if (Math.abs(jx - trackXLocal(jz)) < 7) continue; // off-track
+    const jz = 50 + Math.random() * (TERRAIN_SIZE / 2 - 60);
+    if (Math.abs(jx - trackXLocal(jz)) < 7) continue;
     const jy = sampleHeight(jx, jz, heights);
-    if (jy < 4 || jy > 28) continue; // skip sand pockets and snow line
+    if (jy < 4 || jy > 26) continue;
     const tree = buildJuniper();
     tree.position.set(jx, jy, jz);
     tree.scale.setScalar(0.7 + Math.random() * 0.6);
@@ -274,16 +272,16 @@ function init(kind: VehicleKind) {
     scene.add(tree);
   }
 
-  // Wild bushes — fill the mid-range. Scattered everywhere except on track.
-  for (let i = 0; i < 120; i++) {
+  // Wild bushes — much denser to fill the forest understory.
+  for (let i = 0; i < 600; i++) {
     const bx = (Math.random() - 0.5) * (TERRAIN_SIZE - 20);
     const bz = (Math.random() - 0.5) * (TERRAIN_SIZE - 20);
     if (Math.abs(bx - trackXLocal(bz)) < 5) continue;
     const by = sampleHeight(bx, bz, heights);
-    if (by > 18) continue; // bushes don't grow on snow
+    if (by > 18) continue;
     const bush = buildBush();
     bush.position.set(bx, by, bz);
-    bush.scale.setScalar(0.7 + Math.random() * 0.6);
+    bush.scale.setScalar(0.6 + Math.random() * 0.7);
     bush.rotation.y = Math.random() * Math.PI * 2;
     scene.add(bush);
   }
@@ -341,8 +339,8 @@ function init(kind: VehicleKind) {
     props.push(spawnBarrel(world, scene, new THREE.Vector3(bx, by, bz)));
   }
 
-  // Birds — proper boids flock that avoids the truck.
-  const birds = new BirdFlock(scene, TERRAIN_SIZE / 2 + 20, 18);
+  // Birds — bigger flock for sky presence.
+  const birds = new BirdFlock(scene, TERRAIN_SIZE / 2 + 20, 32);
 
   // Atmospheric dust haze — drifting low-alpha particles for the dawn corridor feel.
   const dust2 = new DustHaze(scene, TERRAIN_SIZE * 0.9, 80);

@@ -51,10 +51,10 @@ export const SPECS: Record<VehicleKind, VehicleSpec> = {
     // Cargo on the roof rack: thin platform at y=1.28, on top of the body.
     cargoPlatform: { halfExtents: new CANNON.Vec3(0.85, 0.05, 1.05), offset: new CANNON.Vec3(0, 1.33, -0.3) },
     cargoSlots: [
-      { kind: "jerrycan", local: { x: -0.4, y: 1.7, z: 0.3 } },
-      { kind: "jerrycan", local: { x:  0.0, y: 1.7, z: 0.3 } },
-      { kind: "jerrycan", local: { x:  0.4, y: 1.7, z: 0.3 } },
-      { kind: "tarp",     local: { x:  0.0, y: 1.78, z: -0.9 } },
+      { kind: "jerrycan", local: { x: -0.4, y: 1.55, z: 0.3 } },
+      { kind: "jerrycan", local: { x:  0.0, y: 1.55, z: 0.3 } },
+      { kind: "jerrycan", local: { x:  0.4, y: 1.55, z: 0.3 } },
+      { kind: "tarp",     local: { x:  0.0, y: 1.62, z: -0.9 } },
     ],
   },
   hj75: {

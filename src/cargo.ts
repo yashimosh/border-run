@@ -50,15 +50,15 @@ function createCargoBody(slot: CargoSlot, material: CANNON.Material): { body: CA
   let mass: number;
   if (slot.kind === "jerrycan") {
     halfExt = new CANNON.Vec3(0.16, 0.21, 0.09);
-    mass = 18;
+    mass = 8;   // lighter so they settle nicely on the rack
   } else {
     halfExt = new CANNON.Vec3(0.78, 0.27, 0.5);
-    mass = 70;
+    mass = 22;
   }
   const body = new CANNON.Body({ mass, material });
   body.addShape(new CANNON.Box(halfExt));
-  body.linearDamping = 0.04;
-  body.angularDamping = 0.12;
+  body.linearDamping = 0.18;   // higher damping so they don't bounce
+  body.angularDamping = 0.35;
   return { body };
 }
 

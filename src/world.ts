@@ -532,8 +532,8 @@ export function buildAsphaltRoad(heights: number[][]): THREE.Group {
     // Sample height under each edge so the road conforms to terrain.
     const lx = cx + nx * halfWidth, lz = z + nz * halfWidth;
     const rx = cx - nx * halfWidth, rz = z - nz * halfWidth;
-    const ly = sampleHeight(lx, lz, heights) + 0.06;
-    const ry = sampleHeight(rx, rz, heights) + 0.06;
+    const ly = sampleHeight(lx, lz, heights) + 0.18;
+    const ry = sampleHeight(rx, rz, heights) + 0.18;
     positions.push(lx, ly, lz);
     positions.push(rx, ry, rz);
     uvs.push(0, t * 30);
@@ -551,9 +551,10 @@ export function buildAsphaltRoad(heights: number[][]): THREE.Group {
   geo.computeVertexNormals();
 
   const surfaceMat = new THREE.MeshStandardMaterial({
-    color: 0x2a2a2c,
+    color: 0x33312f,
     roughness: 0.95,
     metalness: 0.0,
+    side: THREE.DoubleSide, // safer than tracking strip-winding direction
   });
   const road = new THREE.Mesh(geo, surfaceMat);
   road.receiveShadow = true;
@@ -561,7 +562,7 @@ export function buildAsphaltRoad(heights: number[][]): THREE.Group {
 
   // Shoulder strips (lighter beige) on each side — read as graded earth verge.
   const shoulderHalf = 0.4;
-  const shoulderMat = new THREE.MeshStandardMaterial({ color: 0x8a7556, roughness: 1.0 });
+  const shoulderMat = new THREE.MeshStandardMaterial({ color: 0x8a7556, roughness: 1.0, side: THREE.DoubleSide });
   for (const side of [-1, 1]) {
     const sPos: number[] = [];
     const sIdx: number[] = [];
@@ -578,8 +579,8 @@ export function buildAsphaltRoad(heights: number[][]): THREE.Group {
       const innerZ = z + side * nz * halfWidth;
       const outerX = cx + side * nx * (halfWidth + shoulderHalf * 2);
       const outerZ = z + side * nz * (halfWidth + shoulderHalf * 2);
-      const innerY = sampleHeight(innerX, innerZ, heights) + 0.05;
-      const outerY = sampleHeight(outerX, outerZ, heights) + 0.04;
+      const innerY = sampleHeight(innerX, innerZ, heights) + 0.16;
+      const outerY = sampleHeight(outerX, outerZ, heights) + 0.10;
       sPos.push(innerX, innerY, innerZ);
       sPos.push(outerX, outerY, outerZ);
     }
@@ -607,7 +608,7 @@ export function buildAsphaltRoad(heights: number[][]): THREE.Group {
   for (let i = 0; i < dashCount; i++) {
     const z = zStart + i * dashSpacing + dashSpacing / 2;
     const cx = trackXAt(z);
-    const cy = sampleHeight(cx, z, heights) + 0.075;
+    const cy = sampleHeight(cx, z, heights) + 0.22;
     const dash = new THREE.Mesh(dashGeo, dashMat);
     dash.position.set(cx, cy, z);
     // Orient along tangent.
