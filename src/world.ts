@@ -533,8 +533,21 @@ export function buildAsphaltRoad(heights: number[][]): THREE.Group {
     // Sample height under each edge so the road conforms to terrain.
     const lx = cx + nx * halfWidth, lz = z + nz * halfWidth;
     const rx = cx - nx * halfWidth, rz = z - nz * halfWidth;
-    const ly = sampleHeight(lx, lz, heights) + 0.18;
-    const ry = sampleHeight(rx, rz, heights) + 0.18;
+    // Sample multiple points across the road section + take MAX so the road
+    // surface clears every terrain curvature bump in its path. Without this,
+    // the flat-quad road dips below the curved terrain mesh on slopes.
+    const sampleMaxAlongCross = (px: number, pz: number, nx: number, nz: number, hw: number, samples = 4) => {
+      let m = sampleHeight(px, pz, heights);
+      for (let s = 1; s <= samples; s++) {
+        const t = (s / samples);
+        m = Math.max(m, sampleHeight(px + nx * hw * t, pz + nz * hw * t, heights));
+        m = Math.max(m, sampleHeight(px - nx * hw * t, pz - nz * hw * t, heights));
+      }
+      return m;
+    };
+    const lift = 0.35;
+    const ly = sampleMaxAlongCross(lx, lz, nx, nz, halfWidth) + lift;
+    const ry = sampleMaxAlongCross(rx, rz, nx, nz, halfWidth) + lift;
     positions.push(lx, ly, lz);
     positions.push(rx, ry, rz);
     uvs.push(0, t * 30);
@@ -580,8 +593,8 @@ export function buildAsphaltRoad(heights: number[][]): THREE.Group {
       const innerZ = z + side * nz * halfWidth;
       const outerX = cx + side * nx * (halfWidth + shoulderHalf * 2);
       const outerZ = z + side * nz * (halfWidth + shoulderHalf * 2);
-      const innerY = sampleHeight(innerX, innerZ, heights) + 0.16;
-      const outerY = sampleHeight(outerX, outerZ, heights) + 0.10;
+      const innerY = sampleHeight(innerX, innerZ, heights) + 0.32;
+      const outerY = sampleHeight(outerX, outerZ, heights) + 0.20;
       sPos.push(innerX, innerY, innerZ);
       sPos.push(outerX, outerY, outerZ);
     }
@@ -610,7 +623,7 @@ export function buildAsphaltRoad(heights: number[][]): THREE.Group {
   for (let i = 0; i < dashCount; i++) {
     const z = zStart + i * dashSpacing + dashSpacing / 2;
     const cx = trackXAt(z);
-    const cy = sampleHeight(cx, z, heights) + 0.22;
+    const cy = sampleHeight(cx, z, heights) + 0.42;
     const dash = new THREE.Mesh(dashGeo, dashMat);
     dash.position.set(cx, cy, z);
     // Orient along tangent.
