@@ -11,6 +11,7 @@ import {
   buildWatchtower, buildHut, buildDistantRidges,
   buildRocks, buildScrub, buildBorderPosts, buildBorderLine,
   buildCairn, buildWreck, buildCypress, buildFlagPole,
+  classifyZone, ZONE_TRACTION,
 } from "./world";
 import {
   buildLimestoneSlab, buildPersianOak, buildStoneWall, buildStream,
@@ -161,11 +162,13 @@ function init(kind: VehicleKind) {
   const sun = new THREE.DirectionalLight(0xffd9a8, 1.6);
   sun.position.copy(sunPosition).multiplyScalar(150);
   sun.castShadow = true;
-  sun.shadow.mapSize.set(2048, 2048);
+  sun.shadow.mapSize.set(4096, 4096);  // sharper shadows for the diorama feel
   sun.shadow.camera.left = -180; sun.shadow.camera.right = 180;
   sun.shadow.camera.top = 180; sun.shadow.camera.bottom = -180;
   sun.shadow.camera.near = 1; sun.shadow.camera.far = 400;
-  sun.shadow.bias = -0.0003;
+  sun.shadow.bias = -0.00015;
+  sun.shadow.normalBias = 0.02;
+  sun.shadow.radius = 4;  // softer edge falloff
   scene.add(sun);
 
   // Physics world.
@@ -660,33 +663,55 @@ function init(kind: VehicleKind) {
   const clock = new THREE.Clock();
   const fixedStep = 1 / 60;
 
+  // Base wheel grip — captured from spec at build time so we can scale per-zone.
+  const baseFrictionSlip = 2.2;
+
   function applyDriveInput(dt: number, v: Vehicle) {
-    const targetSteer =
+    // Per-zone traction: sample what's under the truck and scale forces.
+    const zone = classifyZone(v.chassisBody.position.x, v.chassisBody.position.z, heights, isTrack);
+    const trac = ZONE_TRACTION[zone];
+
+    const targetSteer = (
       keys.left ? v.spec.maxSteer :
-      keys.right ? -v.spec.maxSteer : 0;
-    // Smooth steering — exponential approach.
+      keys.right ? -v.spec.maxSteer : 0
+    ) * trac.steer;
     steering += (targetSteer - steering) * Math.min(1, dt * 6);
 
-    // Front wheels = indices 0, 1 (per addWheel order).
     v.raycast.setSteeringValue(steering, 0);
     v.raycast.setSteeringValue(steering, 1);
 
-    // Engine: rear-wheel drive. Boost gives +70% when active and charged.
+    // Update per-wheel friction so snow drifts and sand doesn't (much).
+    for (let i = 0; i < v.raycast.wheelInfos.length; i++) {
+      v.raycast.wheelInfos[i].frictionSlip = baseFrictionSlip * trac.friction;
+    }
+    // Extra linear damping in sand/scrub.
+    v.chassisBody.linearDamping = 0.2 + trac.drag;
+
+    // Engine: rear-wheel drive, scaled by zone traction. Boost stacks on top.
     const boostMul = boostActive && boostCharge > 0 ? 1.7 : 1.0;
-    const drive = keys.fwd ? -v.spec.engineForce * boostMul : keys.back ? v.spec.engineForce * 0.6 : 0;
+    const drive = keys.fwd
+      ? -v.spec.engineForce * boostMul * trac.engine
+      : keys.back
+        ? v.spec.engineForce * 0.6 * trac.engine
+        : 0;
     v.raycast.applyEngineForce(drive, 2);
     v.raycast.applyEngineForce(drive, 3);
-    // No engine on front.
     v.raycast.applyEngineForce(0, 0);
     v.raycast.applyEngineForce(0, 1);
 
-    // Brakes.
-    const brakeAll = keys.brake ? v.spec.brakeForce : 0;
-    const handbrakeRear = keys.handbrake ? v.spec.brakeForce * 1.6 : 0;
+    const brakeAll = keys.brake ? v.spec.brakeForce * trac.brake : 0;
+    const handbrakeRear = keys.handbrake ? v.spec.brakeForce * 1.6 * trac.brake : 0;
     v.raycast.setBrake(brakeAll, 0);
     v.raycast.setBrake(brakeAll, 1);
     v.raycast.setBrake(brakeAll + handbrakeRear, 2);
     v.raycast.setBrake(brakeAll + handbrakeRear, 3);
+
+    // Surface readout for HUD (not a flash — a persistent line).
+    if ((applyDriveInput as any)._lastZone !== zone) {
+      (applyDriveInput as any)._lastZone = zone;
+      const surfaceEl = document.getElementById("hud-surface");
+      if (surfaceEl) surfaceEl.textContent = zone;
+    }
   }
 
   function tick() {

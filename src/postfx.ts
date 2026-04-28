@@ -6,7 +6,8 @@ import * as THREE from "three";
 import {
   EffectComposer, EffectPass, RenderPass, BloomEffect, VignetteEffect,
   ToneMappingEffect, ToneMappingMode, KernelSize,
-  DepthOfFieldEffect,
+  DepthOfFieldEffect, SSAOEffect, NormalPass,
+  HueSaturationEffect, BrightnessContrastEffect,
 } from "postprocessing";
 
 export interface PostFx {
@@ -23,6 +24,26 @@ export function createPostFx(renderer: THREE.WebGLRenderer, scene: THREE.Scene, 
     frameBufferType: THREE.HalfFloatType,
   });
   composer.addPass(new RenderPass(scene, camera));
+
+  // Normal pass — feeds SSAO. Costs an extra pass but enables ambient
+  // occlusion in nooks (under truck, in canyon walls, between rocks).
+  const normalPass = new NormalPass(scene, camera);
+  composer.addPass(normalPass);
+
+  // SSAO — subtle ambient occlusion. Adds shadow contrast in crevices
+  // without making the whole scene dark. Boosts the diorama feel.
+  const ssao = new SSAOEffect(camera, normalPass.texture, {
+    samples: 16,
+    rings: 4,
+    distanceThreshold: 0.4,
+    distanceFalloff: 0.06,
+    rangeThreshold: 0.0015,
+    rangeFalloff: 0.001,
+    luminanceInfluence: 0.5,
+    radius: 12,
+    intensity: 1.4,
+    bias: 0.04,
+  });
 
   const bloom = new BloomEffect({
     intensity: 0.45,
@@ -45,11 +66,18 @@ export function createPostFx(renderer: THREE.WebGLRenderer, scene: THREE.Scene, 
     bokehScale: 2.2,
   });
 
+  // Color grading — slight cool shift in shadows, warm in highlights;
+  // bump saturation a touch for the Art-of-Rally bold-color read.
+  const hueSat = new HueSaturationEffect({ saturation: 0.12 });
+  const briCon = new BrightnessContrastEffect({ brightness: 0.0, contrast: 0.08 });
+
   const toneMap = new ToneMappingEffect({
     mode: ToneMappingMode.AGX,
   });
 
-  composer.addPass(new EffectPass(camera, bloom, dof, vignette, toneMap));
+  // Order: SSAO (depth fades) → DOF → color grade → bloom → vignette → tone.
+  // SSAO must come early, before bloom, so it modifies surfaces before glow.
+  composer.addPass(new EffectPass(camera, ssao, dof, hueSat, briCon, bloom, vignette, toneMap));
 
   return {
     composer,

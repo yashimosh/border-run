@@ -83,7 +83,15 @@ export function buildHeights(): { heights: number[][]; isTrack: boolean[][] } {
       const farPeaks = Math.max(0, (z - TERRAIN_SIZE * 0.25) / TERRAIN_SIZE) * 18
                      * (0.6 + 0.4 * Math.sin(x * 0.025 + z * 0.01));
 
-      let h = ridge + bigFold + longRidge + midNoise + fineNoise + farPeaks;
+      // Fade high-frequency noise on far peaks — Over-the-Hill / Art-of-Rally
+      // mountains read as crisp shapes, not fuzzy lumps. Far north (z > 0)
+      // gets cleaner silhouettes; play area keeps full detail.
+      const farFade = Math.max(0, 1 - Math.max(0, z) / (TERRAIN_SIZE * 0.35));
+      const cleanFactor = 0.25 + 0.75 * farFade; // 1.0 near, 0.25 far
+      let h = ridge + bigFold + longRidge
+            + midNoise * cleanFactor
+            + fineNoise * cleanFactor
+            + farPeaks;
       h += canyonWallHeight(x, z);
 
       const tx = trackX(zNorm);
@@ -211,6 +219,59 @@ export function sampleHeight(x: number, z: number, heights: number[][]): number 
   const j = Math.max(0, Math.min(TERRAIN_RES - 1, Math.floor(v)));
   return heights[i][j];
 }
+
+// Sample slope at a world point — used for per-region traction.
+export function sampleSlope(x: number, z: number, heights: number[][]): number {
+  const elementSize = TERRAIN_SIZE / (TERRAIN_RES - 1);
+  const u = (x + TERRAIN_SIZE / 2) / elementSize;
+  const v = (TERRAIN_SIZE / 2 - z) / elementSize;
+  const i = Math.max(1, Math.min(TERRAIN_RES - 2, Math.floor(u)));
+  const j = Math.max(1, Math.min(TERRAIN_RES - 2, Math.floor(v)));
+  const dx = (heights[i + 1][j] - heights[i - 1][j]) / (2 * elementSize);
+  const dz = (heights[i][j + 1] - heights[i][j - 1]) / (2 * elementSize);
+  return Math.hypot(dx, dz);
+}
+
+export type TerrainZone = "track" | "snow" | "rock" | "sand" | "scrub";
+
+// Classify what's under the wheels — drives per-region grip + engine power.
+// Mirrors the buildTerrainMesh shading logic so visual zones === physical zones.
+export function classifyZone(
+  x: number, z: number,
+  heights: number[][],
+  isTrack: boolean[][],
+): TerrainZone {
+  const elementSize = TERRAIN_SIZE / (TERRAIN_RES - 1);
+  const u = (x + TERRAIN_SIZE / 2) / elementSize;
+  const v = (TERRAIN_SIZE / 2 - z) / elementSize;
+  const i = Math.max(0, Math.min(TERRAIN_RES - 1, Math.floor(u)));
+  const j = Math.max(0, Math.min(TERRAIN_RES - 1, Math.floor(v)));
+  if (isTrack[i][j]) return "track";
+  const h = heights[i][j];
+  const slope = sampleSlope(x, z, heights);
+  if (h >= 18 && slope < 1.6) return "snow";
+  if (slope > 1.6) return "rock";
+  if (h < -0.4) return "sand";
+  return "scrub";
+}
+
+// Per-zone driving parameters. Returned as multipliers on engine force,
+// brake force, steering, and wheel friction-slip. Track is the baseline (1.0).
+export interface ZoneTraction {
+  engine: number;   // engine force multiplier
+  brake: number;    // brake force multiplier
+  steer: number;    // max steer multiplier
+  friction: number; // wheel frictionSlip multiplier (lower = slippery)
+  drag: number;     // extra linear damping (added to default)
+}
+
+export const ZONE_TRACTION: Record<TerrainZone, ZoneTraction> = {
+  track:  { engine: 1.00, brake: 1.00, steer: 1.00, friction: 1.00, drag: 0.00 },
+  scrub:  { engine: 0.85, brake: 0.95, steer: 0.95, friction: 0.85, drag: 0.06 }, // bumpy + rougher
+  sand:   { engine: 0.55, brake: 0.65, steer: 0.85, friction: 0.55, drag: 0.20 }, // bogs you down
+  snow:   { engine: 0.75, brake: 0.55, steer: 0.85, friction: 0.45, drag: 0.05 }, // slippery
+  rock:   { engine: 0.65, brake: 0.85, steer: 0.85, friction: 0.95, drag: 0.10 }, // grippy but slow
+};
 
 // — Sun disk: a faint warm circle low on the +z horizon. Soft outer halo.
 // Reads as the sun not yet over the ridge — supports the dawn register.
