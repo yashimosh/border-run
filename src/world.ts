@@ -165,8 +165,9 @@ export function buildTerrainMesh(heights: number[][], isTrack: boolean[][]): THR
   const limestone = new THREE.Color(0x8e8472);
   const limestoneShadow = new THREE.Color(0x554f44);
   const meadowDry = new THREE.Color(0x9a9460);
-  const oakForest = new THREE.Color(0x00ff00);  // DEBUG: pure green to confirm color path works
-  const oakHigh = new THREE.Color(0xff0000);    // DEBUG: pure red for high zone
+  // Kurdistan oak forest greens — saturated enough to read through fog + AGX.
+  const oakForest = new THREE.Color(0x4f7a3a);  // Zagros oak canopy
+  const oakHigh = new THREE.Color(0x6a8a48);    // upper slopes, drier scrub
   // Dirt road palette baked into terrain vertices. Warm tan/brown — packed
   // earth, worn by tires.
   const dirtRoad = new THREE.Color(0x6e5530);
@@ -208,9 +209,11 @@ export function buildTerrainMesh(heights: number[][], isTrack: boolean[][]): THR
         const slope = slopeAt(i, jFlipped);
         // Slope thresholds aggressive — green dominates, only true cliffs
         // become rock. Snow only at real altitude.
-        if (h >= 32) {
+        // Heights run ~3..45+. Push snow + rock thresholds way up so green
+        // dominates. Snow only appears at genuine alpine peaks (>40m).
+        if (h >= 42) {
           c = snow;              // peaks
-        } else if (h >= 26) {
+        } else if (h >= 38) {
           c = snowDirty;         // snow line
         } else if (slope > 3.5) {
           c = limestoneShadow;   // genuinely steep cliff
@@ -218,8 +221,8 @@ export function buildTerrainMesh(heights: number[][], isTrack: boolean[][]): THR
           c = limestone;
         } else if (h < -0.4) {
           c = meadowDry;
-        } else if (h > 20) {
-          c = oakHigh;
+        } else if (h > 28) {
+          c = oakHigh;           // upper slopes
         } else {
           c = oakForest;         // baseline — should be MOST cells
         }
@@ -233,14 +236,12 @@ export function buildTerrainMesh(heights: number[][], isTrack: boolean[][]): THR
   geo.setAttribute("color", new THREE.BufferAttribute(colors, 3));
   geo.computeVertexNormals();
 
-  // DEBUG: MeshBasicMaterial — no light/IBL interaction. If colors STILL read
-  // as cream, the culprit is fog or postprocessing, not lighting.
-  const mat = new THREE.MeshBasicMaterial({
+  const mat = new THREE.MeshStandardMaterial({
     vertexColors: true,
+    roughness: 0.95,
+    metalness: 0.0,
   });
-  const mesh = new THREE.Mesh(geo, mat);
-  (window as any).__terrain = mesh;
-  return mesh;
+  return new THREE.Mesh(geo, mat);
 }
 
 export function sampleHeight(x: number, z: number, heights: number[][]): number {
