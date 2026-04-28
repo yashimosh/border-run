@@ -9,33 +9,73 @@ export const TERRAIN_SIZE = 320;
 export const TERRAIN_RES = 128;
 export const BORDER_Z = 60;
 
-// — Authored terrain. North ridge, valley E-W, dirt track curving through.
-// Returns [heights, isTrack] — a parallel grid telling the mesh shader which
-// vertices are "on the road" so we can shade them sandy instead of scrub.
+// — Realistic terrain via ridged-multifractal noise + carved valley along the
+// road. The road follows the valley floor (logical — real mountain roads
+// follow the path of least vertical change). South starts low + rolling, north
+// rises to alpine snow caps. A switchback section in the middle handles the
+// steepest gradient.
 export function buildHeights(): { heights: number[][]; isTrack: boolean[][] } {
   const heights: number[][] = [];
   const isTrack: boolean[][] = [];
 
-  // Track centerline: a sine curve in x as a function of z. Player drives +z.
-  const trackX = (zNorm: number) => Math.sin(zNorm * 2.4) * 12 + Math.sin(zNorm * 5.7) * 3;
-
-  // Track elevation: rolling-hill rhythm + one authored ramp for the launch moment.
-  // The ramp is a steep crest at z ≈ 5 (just before the border) — it's the indie-game
-  // "moment" beat where you can catch air if you hit it fast.
-  const trackY = (z: number) => {
-    let h =
-      Math.sin(z * 0.26) * 3.2 +
-      Math.sin(z * 0.41 + 0.7) * 1.4 +
-      Math.cos(z * 0.13) * 0.8 +
-      Math.max(0, z + 80) * 0.04;
-    // Ramp: localized bump centered at z=5, ~10m wide, ~3m peak. Asymmetric — steeper
-    // on the approach (-z side), shallower on the descent so you actually launch.
-    const rampDist = z - 5;
-    if (rampDist > -8 && rampDist < 6) {
-      const t = rampDist < 0 ? (rampDist + 8) / 8 : 1 - rampDist / 6;
-      h += Math.max(0, t) * 3.0;
+  // Track centerline: hand-routed to follow valley + include switchbacks.
+  // Lower half: gentle approach. Middle: tighter switchbacks where the
+  // gradient is steepest. Upper: gentler approach to the border.
+  const trackX = (zNorm: number) => {
+    // zNorm is in roughly -0.5..+0.5 (z / TERRAIN_SIZE).
+    if (zNorm < -0.15) {
+      // South approach: long gentle curve
+      return Math.sin(zNorm * 3.0) * 14 + Math.sin(zNorm * 6.5) * 4;
+    } else if (zNorm < 0.12) {
+      // Middle: switchback section (higher frequency = tighter curves)
+      const base = Math.sin(zNorm * 3.0) * 14 + Math.sin(zNorm * 6.5) * 4;
+      const switchback = Math.sin((zNorm - (-0.15)) * 24) * 18;
+      return base + switchback;
+    } else {
+      // Upper approach to border: realign toward center
+      return Math.sin(zNorm * 3.0) * 14 + Math.sin(zNorm * 6.5) * 4;
     }
-    return h;
+  };
+
+  // Track elevation along its length: starts low at south, climbs gradually
+  // to the border. Real mountain roads gain altitude steadily, not in one ramp.
+  const trackY = (z: number) => {
+    // Smooth monotonic climb from south to north.
+    const zNorm01 = (z + TERRAIN_SIZE / 2) / TERRAIN_SIZE; // 0..1
+    const climb = Math.pow(zNorm01, 1.3) * 24; // 0 → 24m
+    // Tiny rolling pulse so the road feels alive, not a perfect ramp.
+    const pulse = Math.sin(z * 0.18) * 0.6 + Math.cos(z * 0.31) * 0.4;
+    return climb + pulse;
+  };
+
+  // — Ridged-multifractal-style noise: high values get more detail.
+  // Approximates real mountain terrain where ridges have sharp features
+  // and valleys are smoother (sediment-filled). All using sin/cos for
+  // determinism + speed; not Perlin but reads similar at this scale.
+  const ridgedDetail = (x: number, z: number): number => {
+    let total = 0;
+    let amp = 1.0;
+    let freq = 0.012;
+    let weight = 1.0;
+    for (let o = 0; o < 5; o++) {
+      // Pseudo-noise sample in -1..+1.
+      const s = Math.sin(x * freq * 1.13 + 0.7) * Math.cos(z * freq * 0.97 + 1.3);
+      // Ridge: 1 - |s| — high on ridge crests, low in valleys.
+      let n = 1 - Math.abs(s);
+      n = n * n; // sharpen
+      n *= weight;
+      weight = Math.max(0, Math.min(1, n * 2.2));
+      total += n * amp;
+      amp *= 0.55;
+      freq *= 2.07;
+    }
+    return total; // ~0..2.2
+  };
+
+  // — Smooth Perlin-ish low-frequency for valley shapes.
+  const lowFreqShape = (x: number, z: number): number => {
+    return Math.sin(x * 0.018 + 0.4) * Math.cos(z * 0.022) * 4
+         + Math.sin(z * 0.011) * Math.cos(x * 0.015) * 3;
   };
 
   // Canyon walls flank the road in a midroute section (z = -20..10).
@@ -60,50 +100,42 @@ export function buildHeights(): { heights: number[][]; isTrack: boolean[][] } {
       const z = (j / (TERRAIN_RES - 1) - 0.5) * TERRAIN_SIZE;
       const zNorm = z / TERRAIN_SIZE;
 
-      // Multi-octave terrain. Zagros has dramatic vertical articulation —
-      // limestone walls, deep valleys, peaks. Big amplitudes on long
-      // wavelengths drive the silhouette; mid + fine noise add texture.
-      // North side rises sharply to high snow-capped ridge.
-      const zNormPos = Math.max(0, z / TERRAIN_SIZE);
-      // Quadratic ramp toward the north so the mountains feel like *mountains*.
-      const ridge = zNormPos * zNormPos * 60 + zNormPos * 8;
-      // Big folded ridges (limestone monoclines).
-      const bigFold = Math.sin(x * 0.013 + z * 0.005) * 5.5
-                    + Math.cos(z * 0.018 - x * 0.003) * 4.0;
-      const longRidge = Math.sin(x * 0.034) * 2.4 + Math.cos(z * 0.041) * 1.8;
-      const midNoise =
-        Math.sin(x * 0.07) * 1.1 +
-        Math.cos(z * 0.08) * 0.9 +
-        Math.sin((x + z) * 0.11) * 0.6;
-      const fineNoise =
-        Math.sin(x * 0.21) * 0.25 +
-        Math.cos(z * 0.27) * 0.2 +
-        Math.sin((x - z) * 0.33) * 0.15;
-      // Far peaks: extra rise on the deep north quarter.
-      const farPeaks = Math.max(0, (z - TERRAIN_SIZE * 0.25) / TERRAIN_SIZE) * 18
-                     * (0.6 + 0.4 * Math.sin(x * 0.025 + z * 0.01));
+      // Base elevation: smooth rise from south (low rolling foothills) to
+      // north (alpine snow caps). Curve gives proper mountain feel.
+      const zNorm01 = (z + TERRAIN_SIZE / 2) / TERRAIN_SIZE; // 0..1
+      const baseElevation = Math.pow(zNorm01, 1.45) * 56;
 
-      // Fade high-frequency noise on far peaks — Over-the-Hill / Art-of-Rally
-      // mountains read as crisp shapes, not fuzzy lumps. Far north (z > 0)
-      // gets cleaner silhouettes; play area keeps full detail.
-      const farFade = Math.max(0, 1 - Math.max(0, z) / (TERRAIN_SIZE * 0.35));
-      const cleanFactor = 0.25 + 0.75 * farFade; // 1.0 near, 0.25 far
-      let h = ridge + bigFold + longRidge
-            + midNoise * cleanFactor
-            + fineNoise * cleanFactor
-            + farPeaks;
+      // Ridged-multifractal detail — sharp ridge crests, smoother valleys.
+      // Amp scales with elevation: foothills gentle, peaks dramatic.
+      const ridgeAmp = 1.5 + Math.pow(zNorm01, 1.2) * 9;
+      const ridges = ridgedDetail(x, z) * ridgeAmp;
+
+      // Long-wavelength shape — big ridge folds, broad valleys.
+      const folds = lowFreqShape(x, z);
+
+      let h = baseElevation + ridges + folds;
       h += canyonWallHeight(x, z);
 
+      // Carve a valley along the road. Real roads sit in valleys for a reason —
+      // shallow gradient, drainage, sheltered. Cosine falloff for a smooth bowl.
       const tx = trackX(zNorm);
       const distToTrack = Math.abs(x - tx);
-      // Match the asphalt road mesh halfWidth (4.2m) + a bit of shoulder.
-      const onTrack = distToTrack < 4.4;
-      const inTrackInfluence = distToTrack < 10.0;
+      const valleyHalfWidth = 32;
+      if (distToTrack < valleyHalfWidth) {
+        const t = 1 - distToTrack / valleyHalfWidth;
+        const valleyDepth = 6.0 + Math.pow(zNorm01, 0.8) * 4.0; // deeper higher up
+        const falloff = (1 - Math.cos(t * Math.PI)) * 0.5; // smooth 0→1
+        h -= valleyDepth * falloff;
+      }
 
-      if (inTrackInfluence) {
-        const t = Math.max(0, Math.min(1, 1 - distToTrack / 9));
+      // Track itself sits on the valley floor at trackY rhythm.
+      const onTrack = distToTrack < 4.4;
+      const trackBlendBand = 8.0;
+      if (distToTrack < trackBlendBand) {
+        const t = Math.max(0, 1 - distToTrack / trackBlendBand);
         const targetH = trackY(z);
-        h = h * (1 - t * 0.92) + targetH * (t * 0.92);
+        const blendStrength = t * t * 0.94;
+        h = h * (1 - blendStrength) + targetH * blendStrength;
       }
 
       heights[i][j] = h;
@@ -139,12 +171,10 @@ export function buildTerrainMesh(heights: number[][], isTrack: boolean[][]): THR
   const meadowDry = new THREE.Color(0x9a9460);
   const oakForest = new THREE.Color(0x4a5d36);
   const oakHigh = new THREE.Color(0x6a7a48);
-  // Track palette baked into terrain vertices. Pushed very dark — vertex
-  // colors get multiplied by hemisphere ambient + sun light, so anything
-  // not near-black ends up looking medium grey under daylight.
-  const asphalt = new THREE.Color(0x080809);
-  const asphaltCenter = new THREE.Color(0x040405);
-  const shoulder = new THREE.Color(0x4a4232);
+  // Dirt road palette baked into terrain vertices. Warm tan/brown — packed
+  // earth, worn by tires.
+  const dirtRoad = new THREE.Color(0x6e5530);
+  const shoulder = new THREE.Color(0x5a4628);
   const snow = new THREE.Color(0xeae6e0);
   const snowDirty = new THREE.Color(0xb6b0a4);
 
@@ -176,9 +206,8 @@ export function buildTerrainMesh(heights: number[][], isTrack: boolean[][]): THR
       // gradients, hard transitions between zones. Fewer tones, stronger reads.
       let c: THREE.Color;
       if (isTrack[i][jFlipped]) {
-        // Track cells get asphalt baked-in too as a fallback in case the
-        // road mesh has gaps. The mesh draws on top via polygon offset.
-        c = asphalt;
+        // Track cells get dirt-road color baked into terrain vertices.
+        c = dirtRoad;
       } else {
         const slope = slopeAt(i, jFlipped);
         // Hard zone selection — Kurdistan forest-steppe, not desert.
@@ -548,7 +577,7 @@ export function buildAsphaltRoad(heights: number[][]): THREE.Group {
   geo.computeVertexNormals();
 
   const surfaceMat = new THREE.MeshBasicMaterial({
-    color: 0x2a2a2c,             // visible dark grey (basic = no lighting wash)
+    color: 0x735636,             // worn dirt road — packed earth, slightly warm tan
     side: THREE.DoubleSide,
     fog: true,
     polygonOffset: true,
@@ -562,8 +591,9 @@ export function buildAsphaltRoad(heights: number[][]): THREE.Group {
 
   // Shoulder strips on each side.
   const shoulderHalf = 0.5;
+  // Shoulder: lighter dust/dirt at the road edges.
   const shoulderMat = new THREE.MeshBasicMaterial({
-    color: 0x6e604a, side: THREE.DoubleSide, fog: true,
+    color: 0x8a6e44, side: THREE.DoubleSide, fog: true,
     polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -7,
   });
   for (const side of [-1, 1]) {
@@ -599,27 +629,47 @@ export function buildAsphaltRoad(heights: number[][]): THREE.Group {
     g.add(shoulder);
   }
 
-  // Center-line dashes (using zStart/zEnd/trackXAt declared above).
-  const dashMat = new THREE.MeshBasicMaterial({
-    color: 0xfffbe8, fog: true,
-    polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -6,
+  // Tire ruts — two thin darker strips down the road, where wheels have
+  // worn the dirt smoother. Replaces center-line dashes (no lane markings
+  // on a dirt road).
+  const rutMat = new THREE.MeshBasicMaterial({
+    color: 0x4f3a1c, fog: true,
+    polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -10,
   });
-  const dashGeo = new THREE.PlaneGeometry(0.32, 2.4);
-  dashGeo.rotateX(-Math.PI / 2);
-  const dashSpacing = 5.5;
-  const totalLength = zEnd - zStart;
-  const dashCount = Math.floor(totalLength / dashSpacing);
-  for (let i = 0; i < dashCount; i++) {
-    const z = zStart + i * dashSpacing + dashSpacing / 2;
-    const cx = trackXAt(z);
-    const cy = sampleHeight(cx, z, heights) + 0.10; // just above road mesh (which is at +0.08m)
-    const dash = new THREE.Mesh(dashGeo, dashMat);
-    dash.position.set(cx, cy, z);
-    // Orient along tangent.
-    const cxNext = trackXAt(z + 0.5);
-    const yaw = Math.atan2(cxNext - cx, 0.5);
-    dash.rotation.y = yaw;
-    g.add(dash);
+  for (const rutOffset of [-1.4, 1.4]) { // two ruts, ~2.8m apart (typical wheelbase)
+    const rPos: number[] = [];
+    const rIdx: number[] = [];
+    const rutHalfWidth = 0.18;
+    for (let i = 0; i <= segments; i++) {
+      const t = i / segments;
+      const z = zStart + t * (zEnd - zStart);
+      const cx = trackXAt(z);
+      const dz = (zEnd - zStart) / segments;
+      const cxNext = trackXAt(z + dz);
+      const tx = cxNext - cx, tz = dz;
+      const tlen = Math.hypot(tx, tz);
+      const nx = -tz / tlen, nz = tx / tlen;
+      const centerX = cx + nx * rutOffset;
+      const centerZ = z + nz * rutOffset;
+      const lx2 = centerX + nx * rutHalfWidth;
+      const lz2 = centerZ + nz * rutHalfWidth;
+      const rx2 = centerX - nx * rutHalfWidth;
+      const rz2 = centerZ - nz * rutHalfWidth;
+      const ly2 = sampleHeight(lx2, lz2, heights) + 0.09;
+      const ry2 = sampleHeight(rx2, rz2, heights) + 0.09;
+      rPos.push(lx2, ly2, lz2, rx2, ry2, rz2);
+    }
+    for (let i = 0; i < segments; i++) {
+      const a = i * 2, b = i * 2 + 1, c = (i + 1) * 2, d = (i + 1) * 2 + 1;
+      rIdx.push(a, b, c, b, d, c);
+    }
+    const rgeo = new THREE.BufferGeometry();
+    rgeo.setAttribute("position", new THREE.Float32BufferAttribute(rPos, 3));
+    rgeo.setIndex(rIdx);
+    rgeo.computeVertexNormals();
+    const rut = new THREE.Mesh(rgeo, rutMat);
+    rut.renderOrder = 2;
+    g.add(rut);
   }
 
   return g;
