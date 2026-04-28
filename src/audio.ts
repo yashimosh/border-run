@@ -1,225 +1,79 @@
-// Audio — fully procedural via the Web Audio API.
-// No samples, no licensing, no asset pipeline. Every sound is synthesized at runtime.
-// The register is diegetic: engine, wind, tire-on-gravel. No music.
+// Audio — sample-based. Real engine loops (6 RPMs, crossfaded), real
+// desert wind (Atacama, CC0), real tires-on-gravel. All CC0; no attribution
+// required but acknowledged in /CREDITS.md.
+//
+// The synthesized version that lived here before hit a ceiling — engine
+// noise is the kind of thing samples just do better.
 
 import type { VehicleKind } from "./vehicle";
 
-interface AudioConfig {
-  idleHz: number;
-  throttleSweep: number;
-  speedHz: number;
-  roughness: number;
-  filterMin: number;
-  filterMax: number;
-  // How deep the chug AM goes (0..1). Diesels chug more than gas.
-  chugDepth: number;
-  // Engine-mount wobble depth in Hz (random/LFO modulation on fundamental).
-  wobbleHz: number;
-}
-
-const PROFILES: Record<VehicleKind, AudioConfig> = {
-  // FJ40: 2F gas engine — warm, slightly wheezy, no whine.
-  fj40: { idleHz: 72, throttleSweep: 110, speedHz: 1.4, roughness: 0.10, filterMin: 320, filterMax: 1400, chugDepth: 0.10, wobbleHz: 1.4 },
-  // HJ75: B-series diesel — fuller body, slower chug, more bass.
-  hj75: { idleHz: 50, throttleSweep: 90, speedHz: 1.1, roughness: 0.16, filterMin: 240, filterMax: 1150, chugDepth: 0.16, wobbleHz: 0.9 },
-};
+const ENGINE_URLS = [
+  "/sfx/engine/loop_0.wav",
+  "/sfx/engine/loop_1_0.wav",
+  "/sfx/engine/loop_2_0.wav",
+  "/sfx/engine/loop_3_0.wav",
+  "/sfx/engine/loop_4_0.wav",
+  "/sfx/engine/loop_5_0.wav",
+];
+const WIND_URL = "/sfx/wind_desert.mp3";
+const TIRE_URL = "/sfx/tires_gravel.mp3";
 
 export class AudioSystem {
   ctx: AudioContext;
   master: GainNode;
-  private engineGain!: GainNode;
-  private engineFilter!: BiquadFilterNode;
-  private osc1!: OscillatorNode;
-  private osc2!: OscillatorNode;
-  private osc3!: OscillatorNode;
-  private engineNoiseGain!: GainNode;
-  private engineNoise!: AudioBufferSourceNode;
-  private chugLFO!: OscillatorNode;
-  private chugDepth!: GainNode;
-  private chugBias!: ConstantSourceNode;
-  private chugAM!: GainNode;
-  private wobbleLFO!: OscillatorNode;
-  private wobbleDepth!: GainNode;
-  private windGain!: GainNode;
-  private windFilter!: BiquadFilterNode;
-  private wind!: AudioBufferSourceNode;
-  private tireGain!: GainNode;
-  private tireFilter!: BiquadFilterNode;
-  private tire!: AudioBufferSourceNode;
-  private profile: AudioConfig;
+  private engine: SampleEngine | null = null;
+  private wind: SampleLoop | null = null;
+  private tire: SampleLoop | null = null;
+  private kind: VehicleKind;
+  private ready = false;
   private muted = false;
-  private throttleSmoothed = 0;
-  private speedSmoothed = 0;
 
   constructor(kind: VehicleKind) {
     this.ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
     this.master = this.ctx.createGain();
     this.master.gain.value = 0.7;
     this.master.connect(this.ctx.destination);
-    this.profile = PROFILES[kind];
-
-    this.buildEngine();
-    this.buildWind();
-    this.buildTire();
+    this.kind = kind;
+    this.loadAll();
   }
 
-  private buildEngine() {
-    const { ctx, profile } = this;
-
-    this.engineGain = ctx.createGain();
-    this.engineGain.gain.value = 0.0;
-    this.engineFilter = ctx.createBiquadFilter();
-    this.engineFilter.type = "lowpass";
-    this.engineFilter.frequency.value = profile.filterMin;
-    this.engineFilter.Q.value = 0.6;
-
-    // Engine layers: sub (body) + fundamental (warm) + a tiny shimmer harmonic
-    // that only contributes under throttle. Triangle waves throughout for warmth;
-    // no square — that was the source of the previous "whine".
-    this.osc1 = ctx.createOscillator();
-    this.osc1.type = "sawtooth";
-    this.osc1.frequency.value = profile.idleHz;
-    const g1 = ctx.createGain(); g1.gain.value = 0.45;
-
-    this.osc2 = ctx.createOscillator();
-    this.osc2.type = "triangle"; // was square — too harsh
-    this.osc2.frequency.value = profile.idleHz * 1.5; // 5th-ish, not the buzzy octave
-    this.osc2.detune.value = -7;
-    const g2 = ctx.createGain(); g2.gain.value = 0.08; // much quieter
-
-    this.osc3 = ctx.createOscillator();
-    this.osc3.type = "sawtooth";
-    this.osc3.frequency.value = profile.idleHz * 0.5;
-    this.osc3.detune.value = 4;
-    const g3 = ctx.createGain(); g3.gain.value = 0.32; // beefier sub for body
-
-    this.osc1.connect(g1).connect(this.engineFilter);
-    this.osc2.connect(g2).connect(this.engineFilter);
-    this.osc3.connect(g3).connect(this.engineFilter);
-
-    // Engine-mount wobble: slow LFO modulating the fundamental ±wobbleHz.
-    // Sells the "tired old motor that has seen things" character.
-    this.wobbleLFO = ctx.createOscillator();
-    this.wobbleLFO.type = "sine";
-    this.wobbleLFO.frequency.value = profile.wobbleHz;
-    this.wobbleDepth = ctx.createGain();
-    this.wobbleDepth.gain.value = 1.8; // ±1.8 Hz wobble at idle
-    this.wobbleLFO.connect(this.wobbleDepth);
-    this.wobbleDepth.connect(this.osc1.frequency);
-    this.wobbleDepth.connect(this.osc2.frequency);
-
-    // Chug tremolo: AM at engine_hz/4. Gives the actual putt-putt-putt rhythm.
-    // Implementation: chugAM.gain = chugBias + chugLFO * chugDepth, then route audio through chugAM.
-    this.chugLFO = ctx.createOscillator();
-    this.chugLFO.type = "sine";
-    this.chugLFO.frequency.value = profile.idleHz / 4;
-    this.chugDepth = ctx.createGain();
-    this.chugDepth.gain.value = profile.chugDepth;
-    this.chugBias = ctx.createConstantSource();
-    this.chugBias.offset.value = 1 - profile.chugDepth;
-    this.chugAM = ctx.createGain();
-    this.chugAM.gain.value = 0; // start silent; bias + LFO will set it
-    this.chugBias.connect(this.chugAM.gain);
-    this.chugLFO.connect(this.chugDepth).connect(this.chugAM.gain);
-
-    // Brown noise layer for mechanical roughness.
-    this.engineNoise = ctx.createBufferSource();
-    this.engineNoise.buffer = makeBrownNoise(ctx, 2);
-    this.engineNoise.loop = true;
-    this.engineNoiseGain = ctx.createGain();
-    this.engineNoiseGain.gain.value = profile.roughness;
-    this.engineNoise.connect(this.engineNoiseGain).connect(this.engineFilter);
-
-    // Route engine through chug AM, then steady gain, then master.
-    this.engineFilter.connect(this.chugAM).connect(this.engineGain).connect(this.master);
-
-    this.osc1.start();
-    this.osc2.start();
-    this.osc3.start();
-    this.engineNoise.start();
-    this.wobbleLFO.start();
-    this.chugLFO.start();
-    this.chugBias.start();
+  private async loadAll() {
+    try {
+      const [engineBuffers, windBuf, tireBuf] = await Promise.all([
+        Promise.all(ENGINE_URLS.map((u) => this.loadBuffer(u))),
+        this.loadBuffer(WIND_URL),
+        this.loadBuffer(TIRE_URL),
+      ]);
+      this.engine = new SampleEngine(this.ctx, this.master, engineBuffers, this.kind);
+      this.wind = new SampleLoop(this.ctx, this.master, windBuf);
+      this.tire = new SampleLoop(this.ctx, this.master, tireBuf);
+      this.ready = true;
+    } catch (err) {
+      console.error("[audio] failed to load samples:", err);
+    }
   }
 
-  private buildWind() {
-    const { ctx } = this;
-    this.wind = ctx.createBufferSource();
-    this.wind.buffer = makePinkNoise(ctx, 4);
-    this.wind.loop = true;
-    this.windFilter = ctx.createBiquadFilter();
-    this.windFilter.type = "bandpass";
-    this.windFilter.frequency.value = 480;
-    this.windFilter.Q.value = 0.6;
-    this.windGain = ctx.createGain();
-    this.windGain.gain.value = 0.04; // base wind
-    this.wind.connect(this.windFilter).connect(this.windGain).connect(this.master);
-    this.wind.start();
+  private async loadBuffer(url: string): Promise<AudioBuffer> {
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`fetch ${url} → ${res.status}`);
+    const data = await res.arrayBuffer();
+    return this.ctx.decodeAudioData(data);
   }
 
-  private buildTire() {
-    const { ctx } = this;
-    this.tire = ctx.createBufferSource();
-    this.tire.buffer = makeWhiteNoise(ctx, 3);
-    this.tire.loop = true;
-    this.tireFilter = ctx.createBiquadFilter();
-    this.tireFilter.type = "bandpass";
-    this.tireFilter.frequency.value = 1800;
-    this.tireFilter.Q.value = 1.2;
-    this.tireGain = ctx.createGain();
-    this.tireGain.gain.value = 0.0;
-    this.tire.connect(this.tireFilter).connect(this.tireGain).connect(this.master);
-    this.tire.start();
-  }
-
-  // Called once per frame from main tick.
-  // throttle: -1..1 (positive = forward), speed: m/s, onTrack: bool
+  // Called once per frame. throttle: -1..1 (signed). speed: m/s. onTrack: bool.
   update(dt: number, throttle: number, speed: number, onTrack: boolean) {
-    // Smooth inputs so engine doesn't snap.
-    const k = Math.min(1, dt * 5);
-    this.throttleSmoothed += (Math.abs(throttle) - this.throttleSmoothed) * k;
-    this.speedSmoothed += (speed - this.speedSmoothed) * Math.min(1, dt * 3);
+    if (!this.ready) return;
+    this.engine!.update(dt, throttle, speed);
 
-    const { profile } = this;
-    // Engine pitch: idle + throttle sweep + speed component.
-    const targetHz = profile.idleHz + this.throttleSmoothed * profile.throttleSweep + this.speedSmoothed * profile.speedHz;
-    const t = this.ctx.currentTime;
-    this.osc1.frequency.setTargetAtTime(targetHz, t, 0.04);
-    this.osc2.frequency.setTargetAtTime(targetHz * 2, t, 0.04);
-    this.osc3.frequency.setTargetAtTime(targetHz * 0.5, t, 0.04);
+    // Wind: scales with speed. Atmospheric base.
+    const windAmt = Math.min(0.32, 0.04 + speed * 0.014);
+    this.wind!.setGain(windAmt);
 
-    // Chug rhythm: cylinder firing rate. Idle = pulses you hear as putt-putt;
-    // higher RPM = pitched drone, so the chug AM should fade out — otherwise
-    // it buzzes annoyingly at speed.
-    const chugFreq = targetHz / 4;
-    this.chugLFO.frequency.setTargetAtTime(chugFreq, t, 0.06);
-    const chugFade = 1 - Math.min(1, this.throttleSmoothed * 1.5); // gone above ~67% throttle
-    this.chugDepth.gain.setTargetAtTime(profile.chugDepth * chugFade, t, 0.06);
-    this.chugBias.offset.setTargetAtTime(1 - profile.chugDepth * chugFade, t, 0.06);
-    // Wobble eases off under throttle — motor smooths when working hard.
-    this.wobbleDepth.gain.setTargetAtTime((1.8 - this.throttleSmoothed * 1.4), t, 0.1);
-
-    // Engine filter opens up with throttle.
-    const cutoff = profile.filterMin + this.throttleSmoothed * (profile.filterMax - profile.filterMin);
-    this.engineFilter.frequency.setTargetAtTime(cutoff, t, 0.05);
-
-    // Engine gain — quieter overall (was overpowering). Idle is whispery,
-    // full throttle has body without dominating.
-    const engineGain = 0.10 + this.throttleSmoothed * 0.18;
-    this.engineGain.gain.setTargetAtTime(engineGain, t, 0.05);
-
-    // Wind: atmospheric, much quieter than before. Was the "sand-like noise"
-    // the user complained about. Cap at 0.08 (was 0.18); slow LFO for breathiness.
-    const windAmt = Math.min(0.08, 0.012 + this.speedSmoothed * 0.005);
-    this.windGain.gain.setTargetAtTime(windAmt, t, 0.15);
-    const windCutoff = 320 + this.speedSmoothed * 5;
-    this.windFilter.frequency.setTargetAtTime(windCutoff, t, 0.25);
-
-    // Tire: subtle, only really audible at speed. Was previously dominant.
-    const speedFactor = Math.min(1, this.speedSmoothed / 18);
-    const tireAmt = speedFactor * speedFactor * (onTrack ? 0.04 : 0.08);
-    this.tireGain.gain.setTargetAtTime(tireAmt, t, 0.08);
-    this.tireFilter.frequency.setTargetAtTime(onTrack ? 1200 : 1900, t, 0.18);
+    // Tire: quadratic in speed; brighter off-track. Pitch eases up with speed.
+    const sf = Math.min(1, speed / 16);
+    const tireAmt = sf * sf * (onTrack ? 0.22 : 0.4);
+    this.tire!.setGain(tireAmt);
+    this.tire!.setPlaybackRate(0.85 + sf * 0.55);
   }
 
   resume() {
@@ -228,47 +82,86 @@ export class AudioSystem {
 
   toggleMute(): boolean {
     this.muted = !this.muted;
-    this.master.gain.setTargetAtTime(this.muted ? 0 : 0.7, this.ctx.currentTime, 0.04);
+    this.master.gain.setTargetAtTime(this.muted ? 0 : 0.7, this.ctx.currentTime, 0.05);
     return this.muted;
   }
 }
 
-// — Noise buffer helpers.
+// — Engine: 6 sample loops at different RPMs, all playing continuously,
+// crossfaded by an RPM proxy. Pitched per vehicle (HJ75 a touch lower).
+class SampleEngine {
+  private sources: AudioBufferSourceNode[] = [];
+  private gains: GainNode[] = [];
+  private throttleSmoothed = 0;
+  private speedSmoothed = 0;
+  private basePlaybackRate: number;
 
-function makeWhiteNoise(ctx: AudioContext, seconds: number): AudioBuffer {
-  const buf = ctx.createBuffer(1, ctx.sampleRate * seconds, ctx.sampleRate);
-  const d = buf.getChannelData(0);
-  for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
-  return buf;
+  constructor(ctx: AudioContext, dest: AudioNode, buffers: AudioBuffer[], kind: VehicleKind) {
+    // HJ75 (diesel) pitched lower than FJ40 (gas). Subtle.
+    this.basePlaybackRate = kind === "hj75" ? 0.78 : 0.95;
+    for (let i = 0; i < buffers.length; i++) {
+      const src = ctx.createBufferSource();
+      src.buffer = buffers[i];
+      src.loop = true;
+      src.playbackRate.value = this.basePlaybackRate;
+      const g = ctx.createGain();
+      // First loop quietly audible at idle, others silent. Crossfade brings them in.
+      g.gain.value = i === 0 ? 0.4 : 0;
+      src.connect(g).connect(dest);
+      src.start();
+      this.sources.push(src);
+      this.gains.push(g);
+    }
+  }
+
+  update(dt: number, throttle: number, speed: number) {
+    // Smoothed RPM proxy.
+    this.throttleSmoothed += (Math.abs(throttle) - this.throttleSmoothed) * Math.min(1, dt * 5);
+    this.speedSmoothed += (speed - this.speedSmoothed) * Math.min(1, dt * 3);
+    const rpm = Math.min(1, this.throttleSmoothed * 0.55 + Math.min(this.speedSmoothed / 24, 0.6));
+
+    // Crossfade adjacent loops based on rpm.
+    const idx = rpm * (this.sources.length - 1);
+    const lower = Math.floor(idx);
+    const upper = Math.min(this.sources.length - 1, lower + 1);
+    const t = idx - lower;
+    const ctx = this.sources[0].context;
+    const now = ctx.currentTime;
+    // Total volume rises with throttle so idle is whispery, full throttle has body.
+    const totalGain = 0.32 + this.throttleSmoothed * 0.42;
+    for (let i = 0; i < this.sources.length; i++) {
+      let g = 0;
+      if (i === lower) g = (1 - t) * totalGain;
+      else if (i === upper) g = t * totalGain;
+      this.gains[i].gain.setTargetAtTime(g, now, 0.06);
+    }
+
+    // Subtle pitch nudge with throttle so the engine "leans in" when revving.
+    const playRate = this.basePlaybackRate * (1 + this.throttleSmoothed * 0.08);
+    for (const s of this.sources) s.playbackRate.setTargetAtTime(playRate, now, 0.08);
+  }
 }
 
-function makePinkNoise(ctx: AudioContext, seconds: number): AudioBuffer {
-  // Voss-McCartney approximation — cheap and sounds right.
-  const buf = ctx.createBuffer(1, ctx.sampleRate * seconds, ctx.sampleRate);
-  const d = buf.getChannelData(0);
-  let b0 = 0, b1 = 0, b2 = 0, b3 = 0, b4 = 0, b5 = 0, b6 = 0;
-  for (let i = 0; i < d.length; i++) {
-    const w = Math.random() * 2 - 1;
-    b0 = 0.99886 * b0 + w * 0.0555179;
-    b1 = 0.99332 * b1 + w * 0.0750759;
-    b2 = 0.96900 * b2 + w * 0.1538520;
-    b3 = 0.86650 * b3 + w * 0.3104856;
-    b4 = 0.55000 * b4 + w * 0.5329522;
-    b5 = -0.7616 * b5 - w * 0.0168980;
-    d[i] = (b0 + b1 + b2 + b3 + b4 + b5 + b6 + w * 0.5362) * 0.11;
-    b6 = w * 0.115926;
-  }
-  return buf;
-}
+// — A single looping sample with controllable gain + playback rate.
+class SampleLoop {
+  private src: AudioBufferSourceNode;
+  private gain: GainNode;
 
-function makeBrownNoise(ctx: AudioContext, seconds: number): AudioBuffer {
-  const buf = ctx.createBuffer(1, ctx.sampleRate * seconds, ctx.sampleRate);
-  const d = buf.getChannelData(0);
-  let last = 0;
-  for (let i = 0; i < d.length; i++) {
-    const w = Math.random() * 2 - 1;
-    last = (last + 0.02 * w) / 1.02;
-    d[i] = last * 3.5;
+  constructor(ctx: AudioContext, dest: AudioNode, buffer: AudioBuffer) {
+    this.src = ctx.createBufferSource();
+    this.src.buffer = buffer;
+    this.src.loop = true;
+    this.gain = ctx.createGain();
+    this.gain.gain.value = 0;
+    this.src.connect(this.gain).connect(dest);
+    this.src.start();
   }
-  return buf;
+
+  setGain(v: number) {
+    this.gain.gain.setTargetAtTime(v, this.src.context.currentTime, 0.1);
+  }
+
+  setPlaybackRate(r: number) {
+    this.src.playbackRate.setTargetAtTime(r, this.src.context.currentTime, 0.1);
+  }
 }
