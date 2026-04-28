@@ -100,37 +100,36 @@ export function buildHeights(): { heights: number[][]; isTrack: boolean[][] } {
       const z = (j / (TERRAIN_RES - 1) - 0.5) * TERRAIN_SIZE;
       const zNorm = z / TERRAIN_SIZE;
 
-      // Base elevation: smooth rise from south (low rolling foothills) to
-      // north (alpine snow caps). Curve gives proper mountain feel.
+      // Base elevation: south foothills (~3m baseline) to alpine north (~38m).
+      // Solid foothills baseline so the south doesn't fall below sea level.
       const zNorm01 = (z + TERRAIN_SIZE / 2) / TERRAIN_SIZE; // 0..1
-      const baseElevation = Math.pow(zNorm01, 1.45) * 56;
+      const baseElevation = 3.0 + Math.pow(zNorm01, 1.45) * 38;
 
       // Ridged-multifractal detail — sharp ridge crests, smoother valleys.
-      // Amp scales with elevation: foothills gentle, peaks dramatic.
-      const ridgeAmp = 1.5 + Math.pow(zNorm01, 1.2) * 9;
+      const ridgeAmp = 1.0 + Math.pow(zNorm01, 1.2) * 7;
       const ridges = ridgedDetail(x, z) * ridgeAmp;
 
-      // Long-wavelength shape — big ridge folds, broad valleys.
+      // Long-wavelength shape — broad ridge folds.
       const folds = lowFreqShape(x, z);
 
       let h = baseElevation + ridges + folds;
       h += canyonWallHeight(x, z);
 
-      // Carve a valley along the road. Real roads sit in valleys for a reason —
-      // shallow gradient, drainage, sheltered. Cosine falloff for a smooth bowl.
+      // Subtle valley carve — enough to make the road read as "in a valley"
+      // without pushing terrain below sea level (the meadow threshold).
       const tx = trackX(zNorm);
       const distToTrack = Math.abs(x - tx);
-      const valleyHalfWidth = 32;
+      const valleyHalfWidth = 24;
       if (distToTrack < valleyHalfWidth) {
         const t = 1 - distToTrack / valleyHalfWidth;
-        const valleyDepth = 6.0 + Math.pow(zNorm01, 0.8) * 4.0; // deeper higher up
-        const falloff = (1 - Math.cos(t * Math.PI)) * 0.5; // smooth 0→1
+        const valleyDepth = 2.5 + Math.pow(zNorm01, 0.6) * 2.5;
+        const falloff = (1 - Math.cos(t * Math.PI)) * 0.5;
         h -= valleyDepth * falloff;
       }
 
-      // Track itself sits on the valley floor at trackY rhythm.
+      // Track itself sits on a graded path at trackY rhythm.
       const onTrack = distToTrack < 4.4;
-      const trackBlendBand = 8.0;
+      const trackBlendBand = 7.0;
       if (distToTrack < trackBlendBand) {
         const t = Math.max(0, 1 - distToTrack / trackBlendBand);
         const targetH = trackY(z);
