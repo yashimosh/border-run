@@ -161,7 +161,7 @@ function init(kind: VehicleKind) {
   const postfx = createPostFx(renderer, scene, camera);
 
   // Lighting — cold dawn.
-  const hemi = new THREE.HemisphereLight(0xc7c0b2, 0x352e22, 0.55);
+  const hemi = new THREE.HemisphereLight(0x88928a, 0x2a2a20, 0.32);
   scene.add(hemi);
   // Sun light direction follows the sky shader's sun position. Warm dawn color.
   const sun = new THREE.DirectionalLight(0xffd9a8, 1.6);

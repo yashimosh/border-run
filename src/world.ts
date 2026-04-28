@@ -165,8 +165,8 @@ export function buildTerrainMesh(heights: number[][], isTrack: boolean[][]): THR
   const limestone = new THREE.Color(0x8e8472);
   const limestoneShadow = new THREE.Color(0x554f44);
   const meadowDry = new THREE.Color(0x9a9460);
-  const oakForest = new THREE.Color(0x4a5d36);
-  const oakHigh = new THREE.Color(0x6a7a48);
+  const oakForest = new THREE.Color(0x39592a);  // deeper saturated forest green
+  const oakHigh = new THREE.Color(0x55703a);    // higher-elevation paler oak
   // Dirt road palette baked into terrain vertices. Warm tan/brown — packed
   // earth, worn by tires.
   const dirtRoad = new THREE.Color(0x6e5530);
