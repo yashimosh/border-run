@@ -96,9 +96,9 @@ export function buildHeights(): { heights: number[][]; isTrack: boolean[][] } {
 
       const tx = trackX(zNorm);
       const distToTrack = Math.abs(x - tx);
-      // Match the asphalt road mesh width (halfWidth 3.4m + shoulder 0.8m).
-      const onTrack = distToTrack < 3.6;
-      const inTrackInfluence = distToTrack < 9.0;
+      // Match the asphalt road mesh halfWidth (4.2m) + a bit of shoulder.
+      const onTrack = distToTrack < 4.4;
+      const inTrackInfluence = distToTrack < 10.0;
 
       if (inTrackInfluence) {
         const t = Math.max(0, Math.min(1, 1 - distToTrack / 9));
@@ -503,7 +503,7 @@ export function buildBorderLine(): THREE.Line {
 // vertex-color-baked dirt look with something that reads as a real road.
 export function buildAsphaltRoad(heights: number[][]): THREE.Group {
   const g = new THREE.Group();
-  const halfWidth = 3.4; // 6.8m road, two-lane Kurdish mountain road
+  const halfWidth = 4.2; // wider road for visibility
   const segments = 140;
   const zStart = -TERRAIN_SIZE / 2 + 5;
   const zEnd = TERRAIN_SIZE / 2 - 5;
@@ -552,10 +552,10 @@ export function buildAsphaltRoad(heights: number[][]): THREE.Group {
   geo.computeVertexNormals();
 
   const surfaceMat = new THREE.MeshStandardMaterial({
-    color: 0x33312f,
-    roughness: 0.95,
-    metalness: 0.0,
-    side: THREE.DoubleSide, // safer than tracking strip-winding direction
+    color: 0x1a1a1c,                  // darker asphalt for higher contrast against forest
+    roughness: 0.85,
+    metalness: 0.05,
+    side: THREE.DoubleSide,
   });
   const road = new THREE.Mesh(geo, surfaceMat);
   road.receiveShadow = true;
@@ -600,10 +600,11 @@ export function buildAsphaltRoad(heights: number[][]): THREE.Group {
   }
 
   // Center-line dashes — short white segments sampled along the curve.
-  const dashMat = new THREE.MeshBasicMaterial({ color: 0xe8e3d4, fog: true });
-  const dashGeo = new THREE.PlaneGeometry(0.18, 1.6);
+  // Wider + longer dashes for visibility against asphalt.
+  const dashMat = new THREE.MeshBasicMaterial({ color: 0xfffbe8, fog: true });
+  const dashGeo = new THREE.PlaneGeometry(0.32, 2.4);
   dashGeo.rotateX(-Math.PI / 2);
-  const dashSpacing = 4.5; // m between dash centers
+  const dashSpacing = 5.5; // m between dash centers
   const totalLength = zEnd - zStart;
   const dashCount = Math.floor(totalLength / dashSpacing);
   for (let i = 0; i < dashCount; i++) {
