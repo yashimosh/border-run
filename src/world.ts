@@ -105,8 +105,9 @@ export function buildHeights(): { heights: number[][]; isTrack: boolean[][] } {
       const zNorm01 = (z + TERRAIN_SIZE / 2) / TERRAIN_SIZE; // 0..1
       const baseElevation = 3.0 + Math.pow(zNorm01, 1.45) * 38;
 
-      // Ridged-multifractal detail — sharp ridge crests, smoother valleys.
-      const ridgeAmp = 1.0 + Math.pow(zNorm01, 1.2) * 7;
+      // Ridged-multifractal detail. Kept small so most slopes stay <1.0
+      // (oak forest band). High elevation gets more pronounced ridges.
+      const ridgeAmp = 0.4 + Math.pow(zNorm01, 1.5) * 4.5;
       const ridges = ridgedDetail(x, z) * ridgeAmp;
 
       // Long-wavelength shape — broad ridge folds.
@@ -209,21 +210,22 @@ export function buildTerrainMesh(heights: number[][], isTrack: boolean[][]): THR
         c = dirtRoad;
       } else {
         const slope = slopeAt(i, jFlipped);
-        // Hard zone selection — Kurdistan forest-steppe, not desert.
-        if (h >= 24 && slope < 1.6) {
+        // Kurdistan forest-steppe palette. Slope thresholds tuned higher so
+        // the typical hillside reads green oak, not bare limestone.
+        if (h >= 28 && slope < 2.2) {
           c = snow;              // alpine snow cap
-        } else if (h >= 18 && slope < 1.4) {
+        } else if (h >= 22 && slope < 1.8) {
           c = snowDirty;         // patchy snow line
+        } else if (slope > 2.4) {
+          c = limestoneShadow;   // steep cliff face only
         } else if (slope > 1.6) {
-          c = limestoneShadow;   // steep cliff face
-        } else if (slope > 1.0) {
-          c = limestone;         // limestone outcrop on medium slope
+          c = limestone;         // medium-steep slope
         } else if (h < -0.4) {
-          c = meadowDry;         // dry-meadow low pocket (was sand)
-        } else if (h > 12) {
+          c = meadowDry;         // very low pockets only
+        } else if (h > 18) {
           c = oakHigh;           // higher oak / scrub mix
         } else {
-          c = oakForest;         // baseline oak forest steppe — the dominant green
+          c = oakForest;         // dominant green — most cells
         }
       }
       colors[idx * 3] = c.r;
