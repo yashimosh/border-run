@@ -139,10 +139,12 @@ export function buildTerrainMesh(heights: number[][], isTrack: boolean[][]): THR
   const meadowDry = new THREE.Color(0x9a9460);
   const oakForest = new THREE.Color(0x4a5d36);
   const oakHigh = new THREE.Color(0x6a7a48);
-  // Track palette: real asphalt (dark) baked into terrain vertices.
-  const asphalt = new THREE.Color(0x222226);     // road surface
-  const asphaltCenter = new THREE.Color(0x141416); // slightly darker rut-line in middle
-  const shoulder = new THREE.Color(0x6a5e44);    // graded earth verge
+  // Track palette baked into terrain vertices. Pushed very dark — vertex
+  // colors get multiplied by hemisphere ambient + sun light, so anything
+  // not near-black ends up looking medium grey under daylight.
+  const asphalt = new THREE.Color(0x080809);
+  const asphaltCenter = new THREE.Color(0x040405);
+  const shoulder = new THREE.Color(0x4a4232);
   const snow = new THREE.Color(0xeae6e0);
   const snowDirty = new THREE.Color(0xb6b0a4);
 
