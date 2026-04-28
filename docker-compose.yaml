@@ -1,0 +1,17 @@
+# Coolify reads this for deployment (build_pack = dockercompose).
+# Named volume `border-run-stats` persists analytics across every redeploy —
+# Coolify's rolling update never runs `docker compose down -v`, so the volume
+# outlives container replacements indefinitely.
+#
+# Traefik routing labels are injected by Coolify at deploy time.
+# coolify network is external (created by Coolify infra).
+
+services:
+  border-run:
+    build: .
+    restart: unless-stopped
+    volumes:
+      - border-run-stats:/data
+
+volumes:
+  border-run-stats:
