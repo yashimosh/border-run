@@ -96,7 +96,9 @@ export function buildHeights(): { heights: number[][]; isTrack: boolean[][] } {
       // Base elevation: south foothills (~3m baseline) to alpine north (~38m).
       // Solid foothills baseline so the south doesn't fall below sea level.
       const zNorm01 = (z + TERRAIN_SIZE / 2) / TERRAIN_SIZE; // 0..1
-      const baseElevation = 3.0 + Math.pow(zNorm01, 1.45) * 38;
+      // Cap max elevation around 25m so most cells stay in the green band.
+      // Snow only reads at the highest peaks where ridges + folds stack.
+      const baseElevation = 3.0 + Math.pow(zNorm01, 1.45) * 22;
 
       // Ridged-multifractal detail. Kept small so most slopes stay <1.0
       // (oak forest band). High elevation gets more pronounced ridges.
@@ -211,9 +213,11 @@ export function buildTerrainMesh(heights: number[][], isTrack: boolean[][]): THR
         // become rock. Snow only at real altitude.
         // Heights run ~3..45+. Push snow + rock thresholds way up so green
         // dominates. Snow only appears at genuine alpine peaks (>40m).
-        if (h >= 42) {
-          c = snow;              // peaks
-        } else if (h >= 38) {
+        // With base capped at ~25m, ridges + folds push true peaks to ~30m.
+        // Snow only at >28m, oak forest dominates everything below 18m.
+        if (h >= 30) {
+          c = snow;              // alpine peaks (rare)
+        } else if (h >= 27) {
           c = snowDirty;         // snow line
         } else if (slope > 3.5) {
           c = limestoneShadow;   // genuinely steep cliff
@@ -221,10 +225,10 @@ export function buildTerrainMesh(heights: number[][], isTrack: boolean[][]): THR
           c = limestone;
         } else if (h < -0.4) {
           c = meadowDry;
-        } else if (h > 28) {
-          c = oakHigh;           // upper slopes
+        } else if (h > 18) {
+          c = oakHigh;           // upper slopes (drier scrub)
         } else {
-          c = oakForest;         // baseline — should be MOST cells
+          c = oakForest;         // baseline — MOST cells
         }
       }
       colors[idx * 3] = c.r;
