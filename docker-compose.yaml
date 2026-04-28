@@ -2,9 +2,6 @@
 # Named volume `border-run-stats` persists analytics across every redeploy —
 # Coolify's rolling update never runs `docker compose down -v`, so the volume
 # outlives container replacements indefinitely.
-#
-# Traefik routing labels are injected by Coolify at deploy time.
-# coolify network is external (created by Coolify infra).
 
 services:
   border-run:
@@ -12,6 +9,29 @@ services:
     restart: unless-stopped
     volumes:
       - border-run-stats:/data
+    networks:
+      - coolify
+    labels:
+      - traefik.enable=true
+      - traefik.http.middlewares.gzip.compress=true
+      - traefik.http.middlewares.redirect-to-https.redirectscheme.scheme=https
+      - traefik.http.routers.http-0-z2nmr460b1wh6dsiqa977eeu.entryPoints=http
+      - traefik.http.routers.http-0-z2nmr460b1wh6dsiqa977eeu.middlewares=redirect-to-https
+      - "traefik.http.routers.http-0-z2nmr460b1wh6dsiqa977eeu.rule=Host(`borderrun.yashimosh.com`) && PathPrefix(`/`)"
+      - traefik.http.routers.http-0-z2nmr460b1wh6dsiqa977eeu.service=http-0-z2nmr460b1wh6dsiqa977eeu
+      - traefik.http.routers.https-0-z2nmr460b1wh6dsiqa977eeu.entryPoints=https
+      - traefik.http.routers.https-0-z2nmr460b1wh6dsiqa977eeu.middlewares=gzip
+      - "traefik.http.routers.https-0-z2nmr460b1wh6dsiqa977eeu.rule=Host(`borderrun.yashimosh.com`) && PathPrefix(`/`)"
+      - traefik.http.routers.https-0-z2nmr460b1wh6dsiqa977eeu.service=https-0-z2nmr460b1wh6dsiqa977eeu
+      - traefik.http.routers.https-0-z2nmr460b1wh6dsiqa977eeu.tls.certresolver=letsencrypt
+      - traefik.http.routers.https-0-z2nmr460b1wh6dsiqa977eeu.tls=true
+      - traefik.http.services.http-0-z2nmr460b1wh6dsiqa977eeu.loadbalancer.server.port=4321
+      - traefik.http.services.https-0-z2nmr460b1wh6dsiqa977eeu.loadbalancer.server.port=4321
+      - coolify.managed=true
 
 volumes:
   border-run-stats:
+
+networks:
+  coolify:
+    external: true
