@@ -11,7 +11,7 @@ import {
   buildWatchtower, buildHut, buildDistantRidges,
   buildRocks, buildScrub, buildBorderPosts, buildBorderLine,
   buildCairn, buildWreck, buildCypress, buildFlagPole,
-  classifyZone, ZONE_TRACTION,
+  classifyZone, ZONE_TRACTION, buildAsphaltRoad,
 } from "./world";
 import {
   buildLimestoneSlab, buildPersianOak, buildStoneWall, buildStream,
@@ -185,6 +185,9 @@ function init(kind: VehicleKind) {
   terrainMesh.receiveShadow = true;
   scene.add(terrainMesh);
 
+  // Asphalt road — real geometry on top of the terrain.
+  scene.add(buildAsphaltRoad(heights));
+
   // Border + watchtower.
   scene.add(buildBorderLine());
   scene.add(buildBorderPosts());
@@ -232,12 +235,18 @@ function init(kind: VehicleKind) {
     scene.add(slab);
   }
 
-  // Persian oak grove on the south slope (z = -60, off the road).
-  for (let i = 0; i < 14; i++) {
+  // Persian oak forest — Kurdistan's signature. Quercus brantii covers >50%
+  // of Zagros slopes; the slice should *look* forested. Dense scatter on
+  // accessible-altitude slopes (4-22m), sparse below + above.
+  // Use rejection sampling against the road shoulders.
+  for (let i = 0; i < 220; i++) {
+    const ox = (Math.random() - 0.5) * (TERRAIN_SIZE - 30);
+    const oz = (Math.random() - 0.5) * (TERRAIN_SIZE - 30);
+    if (Math.abs(ox - trackXLocal(oz)) < 7) continue;
+    const oy = sampleHeight(ox, oz, heights);
+    if (oy < 1 || oy > 22) continue;
     const oak = buildPersianOak();
-    const ox = -32 + Math.random() * 30;
-    const oz = -85 + Math.random() * 30;
-    oak.position.set(ox, sampleHeight(ox, oz, heights), oz);
+    oak.position.set(ox, oy, oz);
     oak.scale.setScalar(0.85 + Math.random() * 0.5);
     oak.rotation.y = Math.random() * Math.PI * 2;
     scene.add(oak);

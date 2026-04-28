@@ -132,14 +132,16 @@ export function buildTerrainMesh(heights: number[][], isTrack: boolean[][]): THR
   // Palette tuned to Zagros geology. Limestone where slope is steep (canyon walls,
   // ridges); sand in low pockets; scrub-olive on the broad mid-elevations; dirt on
   // the graded track; rut darkest on centerline.
-  const limestone = new THREE.Color(0x9c907a);
-  const limestoneShadow = new THREE.Color(0x6e6657);
-  const sand = new THREE.Color(0xb8a075);
-  const scrub = new THREE.Color(0x6e6555);
-  const scrubDry = new THREE.Color(0x837048);
-  const dirt = new THREE.Color(0xa68a5b);
-  const rut = new THREE.Color(0x6b5436);
-  // Snow palette for high-altitude peaks. White at the top, partial dusting in transition.
+  // Kurdistan Zagros palette: forest-steppe with oak canopy, not desert.
+  // Greens dominate where vegetation grows; limestone stays where rocks
+  // dominate; snow only at altitude.
+  const limestone = new THREE.Color(0x8e8472);
+  const limestoneShadow = new THREE.Color(0x554f44);
+  const meadowDry = new THREE.Color(0x9a9460);   // late-summer dried-grass meadow (was "sand")
+  const oakForest = new THREE.Color(0x4a5d36);   // oak canopy green (was "scrub")
+  const oakHigh = new THREE.Color(0x6a7a48);     // higher-elevation paler oak (was "scrubDry")
+  const dirt = new THREE.Color(0x8a6a3e);        // graded earth track
+  const rut = new THREE.Color(0x5e4a2c);         // worn rut
   const snow = new THREE.Color(0xeae6e0);
   const snowDirty = new THREE.Color(0xb6b0a4);
 
@@ -177,21 +179,21 @@ export function buildTerrainMesh(heights: number[][], isTrack: boolean[][]): THR
         c = dist < 1.4 ? rut : dirt;
       } else {
         const slope = slopeAt(i, jFlipped);
-        // Hard zone selection — pick ONE color per band, no blending.
+        // Hard zone selection — Kurdistan forest-steppe, not desert.
         if (h >= 24 && slope < 1.6) {
-          c = snow;             // alpine snow cap
+          c = snow;              // alpine snow cap
         } else if (h >= 18 && slope < 1.4) {
-          c = snowDirty;        // patchy snow line
+          c = snowDirty;         // patchy snow line
         } else if (slope > 1.6) {
-          c = limestoneShadow;  // steep cliff face
-        } else if (slope > 0.9) {
-          c = limestone;        // sloped limestone outcrop
+          c = limestoneShadow;   // steep cliff face
+        } else if (slope > 1.0) {
+          c = limestone;         // limestone outcrop on medium slope
         } else if (h < -0.4) {
-          c = sand;             // low pocket
-        } else if (h > 8) {
-          c = scrubDry;         // high scrub
+          c = meadowDry;         // dry-meadow low pocket (was sand)
+        } else if (h > 12) {
+          c = oakHigh;           // higher oak / scrub mix
         } else {
-          c = scrub;             // baseline scrub steppe
+          c = oakForest;         // baseline oak forest steppe — the dominant green
         }
       }
       colors[idx * 3] = c.r;
@@ -267,10 +269,10 @@ export interface ZoneTraction {
 
 export const ZONE_TRACTION: Record<TerrainZone, ZoneTraction> = {
   track:  { engine: 1.00, brake: 1.00, steer: 1.00, friction: 1.00, drag: 0.00 },
-  scrub:  { engine: 0.85, brake: 0.95, steer: 0.95, friction: 0.85, drag: 0.06 }, // bumpy + rougher
-  sand:   { engine: 0.55, brake: 0.65, steer: 0.85, friction: 0.55, drag: 0.20 }, // bogs you down
-  snow:   { engine: 0.75, brake: 0.55, steer: 0.85, friction: 0.45, drag: 0.05 }, // slippery
-  rock:   { engine: 0.65, brake: 0.85, steer: 0.85, friction: 0.95, drag: 0.10 }, // grippy but slow
+  scrub:  { engine: 0.92, brake: 0.95, steer: 0.95, friction: 0.88, drag: 0.04 }, // oak forest floor
+  sand:   { engine: 0.85, brake: 0.80, steer: 0.90, friction: 0.78, drag: 0.06 }, // dry meadow (renamed feel)
+  snow:   { engine: 0.90, brake: 0.55, steer: 0.85, friction: 0.50, drag: 0.04 },
+  rock:   { engine: 0.95, brake: 0.85, steer: 0.85, friction: 0.95, drag: 0.05 },
 };
 
 // — Sun disk: a faint warm circle low on the +z horizon. Soft outer halo.
@@ -495,7 +497,128 @@ export function buildBorderLine(): THREE.Line {
   return line;
 }
 
-// — Cairn (stones piled by passersby on mountain passes — Kurdish/Iranian custom).
+// — Asphalt road mesh. Real geometry sitting ~5cm above terrain, following
+// the track curve. Dark surface + center-line dashes. Replaces the
+// vertex-color-baked dirt look with something that reads as a real road.
+export function buildAsphaltRoad(heights: number[][]): THREE.Group {
+  const g = new THREE.Group();
+  const halfWidth = 3.4; // 6.8m road, two-lane Kurdish mountain road
+  const segments = 140;
+  const zStart = -TERRAIN_SIZE / 2 + 5;
+  const zEnd = TERRAIN_SIZE / 2 - 5;
+  const trackXAt = (z: number) => {
+    const zNorm = z / TERRAIN_SIZE;
+    return Math.sin(zNorm * 2.4) * 12 + Math.sin(zNorm * 5.7) * 3;
+  };
+
+  // Road surface: BufferGeometry triangle strip.
+  const positions: number[] = [];
+  const indices: number[] = [];
+  const uvs: number[] = [];
+
+  for (let i = 0; i <= segments; i++) {
+    const t = i / segments;
+    const z = zStart + t * (zEnd - zStart);
+    const cx = trackXAt(z);
+    const cy = sampleHeight(cx, z, heights);
+    // Tangent direction along z.
+    const dz = (zEnd - zStart) / segments;
+    const cxNext = trackXAt(z + dz);
+    const tx = cxNext - cx;
+    const tz = dz;
+    const tlen = Math.hypot(tx, tz);
+    const nx = -tz / tlen; // perpendicular (right-hand)
+    const nz =  tx / tlen;
+    // Sample height under each edge so the road conforms to terrain.
+    const lx = cx + nx * halfWidth, lz = z + nz * halfWidth;
+    const rx = cx - nx * halfWidth, rz = z - nz * halfWidth;
+    const ly = sampleHeight(lx, lz, heights) + 0.06;
+    const ry = sampleHeight(rx, rz, heights) + 0.06;
+    positions.push(lx, ly, lz);
+    positions.push(rx, ry, rz);
+    uvs.push(0, t * 30);
+    uvs.push(1, t * 30);
+  }
+  for (let i = 0; i < segments; i++) {
+    const a = i * 2, b = i * 2 + 1, c = (i + 1) * 2, d = (i + 1) * 2 + 1;
+    indices.push(a, b, c);
+    indices.push(b, d, c);
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+  geo.setAttribute("uv", new THREE.Float32BufferAttribute(uvs, 2));
+  geo.setIndex(indices);
+  geo.computeVertexNormals();
+
+  const surfaceMat = new THREE.MeshStandardMaterial({
+    color: 0x2a2a2c,
+    roughness: 0.95,
+    metalness: 0.0,
+  });
+  const road = new THREE.Mesh(geo, surfaceMat);
+  road.receiveShadow = true;
+  g.add(road);
+
+  // Shoulder strips (lighter beige) on each side — read as graded earth verge.
+  const shoulderHalf = 0.4;
+  const shoulderMat = new THREE.MeshStandardMaterial({ color: 0x8a7556, roughness: 1.0 });
+  for (const side of [-1, 1]) {
+    const sPos: number[] = [];
+    const sIdx: number[] = [];
+    for (let i = 0; i <= segments; i++) {
+      const t = i / segments;
+      const z = zStart + t * (zEnd - zStart);
+      const cx = trackXAt(z);
+      const dz = (zEnd - zStart) / segments;
+      const cxNext = trackXAt(z + dz);
+      const tx = cxNext - cx, tz = dz;
+      const tlen = Math.hypot(tx, tz);
+      const nx = -tz / tlen, nz = tx / tlen;
+      const innerX = cx + side * nx * halfWidth;
+      const innerZ = z + side * nz * halfWidth;
+      const outerX = cx + side * nx * (halfWidth + shoulderHalf * 2);
+      const outerZ = z + side * nz * (halfWidth + shoulderHalf * 2);
+      const innerY = sampleHeight(innerX, innerZ, heights) + 0.05;
+      const outerY = sampleHeight(outerX, outerZ, heights) + 0.04;
+      sPos.push(innerX, innerY, innerZ);
+      sPos.push(outerX, outerY, outerZ);
+    }
+    for (let i = 0; i < segments; i++) {
+      const a = i * 2, b = i * 2 + 1, c = (i + 1) * 2, d = (i + 1) * 2 + 1;
+      if (side > 0) { sIdx.push(a, b, c); sIdx.push(b, d, c); }
+      else          { sIdx.push(b, a, c); sIdx.push(d, b, c); } // reverse winding so normals face up
+    }
+    const sgeo = new THREE.BufferGeometry();
+    sgeo.setAttribute("position", new THREE.Float32BufferAttribute(sPos, 3));
+    sgeo.setIndex(sIdx);
+    sgeo.computeVertexNormals();
+    const shoulder = new THREE.Mesh(sgeo, shoulderMat);
+    shoulder.receiveShadow = true;
+    g.add(shoulder);
+  }
+
+  // Center-line dashes — short white segments sampled along the curve.
+  const dashMat = new THREE.MeshBasicMaterial({ color: 0xe8e3d4, fog: true });
+  const dashGeo = new THREE.PlaneGeometry(0.18, 1.6);
+  dashGeo.rotateX(-Math.PI / 2);
+  const dashSpacing = 4.5; // m between dash centers
+  const totalLength = zEnd - zStart;
+  const dashCount = Math.floor(totalLength / dashSpacing);
+  for (let i = 0; i < dashCount; i++) {
+    const z = zStart + i * dashSpacing + dashSpacing / 2;
+    const cx = trackXAt(z);
+    const cy = sampleHeight(cx, z, heights) + 0.075;
+    const dash = new THREE.Mesh(dashGeo, dashMat);
+    dash.position.set(cx, cy, z);
+    // Orient along tangent.
+    const cxNext = trackXAt(z + 0.5);
+    const yaw = Math.atan2(cxNext - cx, 0.5);
+    dash.rotation.y = yaw;
+    g.add(dash);
+  }
+
+  return g;
+}
 export function buildCairn(): THREE.Group {
   const g = new THREE.Group();
   const stoneMat = new THREE.MeshStandardMaterial({ color: 0x6b6155, roughness: 1.0, flatShading: true });

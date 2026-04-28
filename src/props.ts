@@ -13,14 +13,18 @@ export interface Prop {
 
 const propMat = new CANNON.Material({ friction: 0.5, restitution: 0.15 });
 
-// — Goat body + mesh. Light + low damping → fly funny when hit.
+// — Goat body + mesh. Light enough to react when hit, but damped so it
+// doesn't endless-spin or rocket into orbit. Max angular velocity capped
+// per frame in updateGoatBrains so collisions don't snap-rotate them.
 export function spawnGoat(world: CANNON.World, scene: THREE.Scene, pos: THREE.Vector3): Prop {
   const halfExt = new CANNON.Vec3(0.3, 0.32, 0.5);
-  const body = new CANNON.Body({ mass: 12, material: propMat });
+  const body = new CANNON.Body({ mass: 18, material: propMat });
   body.addShape(new CANNON.Box(halfExt));
   body.position.set(pos.x, pos.y + 0.6, pos.z);
-  body.linearDamping = 0.25;
-  body.angularDamping = 0.18;
+  body.linearDamping = 0.5;     // stops sliding around forever
+  body.angularDamping = 0.85;    // stops endless spin
+  body.linearFactor.set(1, 1, 1);
+  body.angularFactor.set(0.3, 1, 0.3); // restrict pitch/roll, allow yaw mostly
   world.addBody(body);
 
   const mesh = buildGoatMesh();
@@ -289,14 +293,24 @@ export function updateGoatBrains(
     const distT = Math.hypot(dxT, dzT);
     brain.fleeing = distT < 9;
 
+    // Cap angular velocity so collision impulses don't spin them like tops.
+    const av = body.angularVelocity;
+    const angSpeed = Math.hypot(av.x, av.y, av.z);
+    const angCap = 6;
+    if (angSpeed > angCap) {
+      body.angularVelocity.scale(angCap / angSpeed, body.angularVelocity);
+    }
+
     if (brain.fleeing) {
-      // Flee directly away from truck.
-      const inv = 1 / Math.max(0.5, distT);
-      body.applyForce(
-        new CANNON.Vec3(dxT * inv * 90, 0, dzT * inv * 90),
-        body.position,
-      );
-      brain.retargetTimer = 0.5; // panic — retarget soon
+      // Flee away from truck. Force capped + applied at center of mass
+      // to minimize torque (no spin). Inverse-square boosted force when
+      // very close so they don't get run over.
+      const inv = 1 / Math.max(2.0, distT);
+      const mag = Math.min(140, 70 * inv * 5); // cap so they can't rocket
+      const fx = (dxT / Math.max(0.5, distT)) * mag;
+      const fz = (dzT / Math.max(0.5, distT)) * mag;
+      body.applyForce(new CANNON.Vec3(fx, 0, fz), new CANNON.Vec3(body.position.x, body.position.y, body.position.z));
+      brain.retargetTimer = 0.5;
     } else {
       brain.retargetTimer -= dt;
       if (brain.retargetTimer <= 0) {

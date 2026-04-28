@@ -146,6 +146,9 @@ export class Radio {
     this.stopAll();
     this.currentIdx = i;
     const s = this.stations[i];
+    // Brief tuning-noise burst on EVERY channel change (~0.4s, fades fast).
+    // The "static between stations" feel without it being a constant noise floor.
+    this.playTuneBurst();
     if (s.procedural) {
       this.procedural = new ProceduralPlayer(this.ctx, this.filter, s.procedural);
       this.procedural.start();
@@ -154,21 +157,17 @@ export class Radio {
       return;
     }
     if (s.live && s.url) {
-      // Live stream: play HTMLAudioElement directly (no Web Audio routing).
-      // Skips CORS issues with createMediaElementSource on cross-origin streams,
-      // and bypasses our AM filter — real Kurdish stations don't need fake AM
-      // character on top, the broadcast already sounds like radio.
+      // Live stream: HTMLAudioElement direct (skips Web Audio CORS issues).
       const el = new Audio(s.url);
-      el.crossOrigin = "anonymous"; // best-effort; fine if server doesn't honor
+      el.crossOrigin = "anonymous";
       el.preload = "auto";
       el.volume = this.liveMuted ? 0 : this.volume;
       el.addEventListener("error", () => {
         console.warn("live stream failed:", s.name);
-        this.fadeInStatic();
+        // Don't replay static — silence is more honest than a noise wall.
       });
       el.play().catch(err => {
         console.warn("live play() rejected:", err);
-        this.fadeInStatic();
       });
       this.liveAudioEl = el;
       this.updateHud();
@@ -203,13 +202,36 @@ export class Radio {
   }
 
   private fadeInStatic() {
+    // Kept for the rare "no signal" placeholder case (URL-station with
+    // missing file). Volume kept LOW so it's not annoying.
     const buf = this.ctx.createBufferSource();
     buf.buffer = this.makeNoise(3);
     buf.loop = true;
     buf.connect(this.staticGain);
     buf.start();
     this.staticBuf = buf;
-    this.staticGain.gain.setTargetAtTime(0.45, this.ctx.currentTime, 0.18);
+    this.staticGain.gain.setTargetAtTime(0.08, this.ctx.currentTime, 0.18);
+  }
+
+  // Brief tuning-noise burst when channel changes. ~0.4s, fast envelope,
+  // peaks at 0.18 then falls. Sounds like turning a tuner knob, not a
+  // constant noise floor.
+  private playTuneBurst() {
+    const t0 = this.ctx.currentTime;
+    const buf = this.ctx.createBufferSource();
+    buf.buffer = this.makeNoise(0.5);
+    buf.loop = false;
+    const burstFilter = this.ctx.createBiquadFilter();
+    burstFilter.type = "bandpass";
+    burstFilter.frequency.value = 2200;
+    burstFilter.Q.value = 0.8;
+    const burstGain = this.ctx.createGain();
+    burstGain.gain.setValueAtTime(0, t0);
+    burstGain.gain.linearRampToValueAtTime(0.18, t0 + 0.04);
+    burstGain.gain.exponentialRampToValueAtTime(0.001, t0 + 0.42);
+    buf.connect(burstFilter).connect(burstGain).connect(this.master);
+    buf.start(t0);
+    buf.stop(t0 + 0.5);
   }
 
   private makeNoise(seconds: number): AudioBuffer {

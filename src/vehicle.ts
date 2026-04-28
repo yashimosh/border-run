@@ -43,8 +43,8 @@ export const SPECS: Record<VehicleKind, VehicleSpec> = {
       { x:  0.85, y: -0.25, z: -1.2 },
       { x: -0.85, y: -0.25, z: -1.2 },
     ],
-    wheelRadius: 0.4,
-    engineForce: 3200,
+    wheelRadius: 0.42,                        // bigger = better climbing on terrain edges
+    engineForce: 5400,                        // more torque so steep slopes don't stall
     brakeForce: 75,
     maxSteer: 0.6,
     meshOffsetY: -0.45,
@@ -69,8 +69,8 @@ export const SPECS: Record<VehicleKind, VehicleSpec> = {
       { x:  0.9, y: -0.3, z: -1.65 },
       { x: -0.9, y: -0.3, z: -1.65 },
     ],
-    wheelRadius: 0.42,
-    engineForce: 3800,
+    wheelRadius: 0.44,
+    engineForce: 6200,
     brakeForce: 90,
     maxSteer: 0.5,
     meshOffsetY: -0.5,
@@ -126,16 +126,16 @@ export function buildVehicle(spec: VehicleSpec, world: CANNON.World, spawn: CANN
   const wheelOpts = {
     radius: spec.wheelRadius,
     directionLocal: new CANNON.Vec3(0, -1, 0),
-    suspensionStiffness: 38,
-    suspensionRestLength: 0.34,
-    frictionSlip: 2.2,           // better grip — less skating
-    dampingRelaxation: 2.6,
-    dampingCompression: 4.8,
-    maxSuspensionForce: 120000,
-    rollInfluence: 0.03,
+    suspensionStiffness: 42,           // stiffer so wheels stay engaged on bumps
+    suspensionRestLength: 0.4,
+    frictionSlip: 2.6,
+    dampingRelaxation: 2.8,
+    dampingCompression: 5.2,
+    maxSuspensionForce: 280000,        // way up — enables steep climbs
+    rollInfluence: 0.02,
     axleLocal: new CANNON.Vec3(-1, 0, 0),
     chassisConnectionPointLocal: new CANNON.Vec3(),
-    maxSuspensionTravel: 0.4,
+    maxSuspensionTravel: 0.55,
     customSlidingRotationalSpeed: -30,
     useCustomSlidingRotationalSpeed: true,
   };
