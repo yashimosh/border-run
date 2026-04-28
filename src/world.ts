@@ -134,15 +134,15 @@ export function buildTerrainMesh(heights: number[][], isTrack: boolean[][]): THR
   // ridges); sand in low pockets; scrub-olive on the broad mid-elevations; dirt on
   // the graded track; rut darkest on centerline.
   // Kurdistan Zagros palette: forest-steppe with oak canopy, not desert.
-  // Greens dominate where vegetation grows; limestone stays where rocks
-  // dominate; snow only at altitude.
   const limestone = new THREE.Color(0x8e8472);
   const limestoneShadow = new THREE.Color(0x554f44);
-  const meadowDry = new THREE.Color(0x9a9460);   // late-summer dried-grass meadow (was "sand")
-  const oakForest = new THREE.Color(0x4a5d36);   // oak canopy green (was "scrub")
-  const oakHigh = new THREE.Color(0x6a7a48);     // higher-elevation paler oak (was "scrubDry")
-  const dirt = new THREE.Color(0x8a6a3e);        // graded earth track
-  const rut = new THREE.Color(0x5e4a2c);         // worn rut
+  const meadowDry = new THREE.Color(0x9a9460);
+  const oakForest = new THREE.Color(0x4a5d36);
+  const oakHigh = new THREE.Color(0x6a7a48);
+  // Track palette: real asphalt (dark) baked into terrain vertices.
+  const asphalt = new THREE.Color(0x222226);     // road surface
+  const asphaltCenter = new THREE.Color(0x141416); // slightly darker rut-line in middle
+  const shoulder = new THREE.Color(0x6a5e44);    // graded earth verge
   const snow = new THREE.Color(0xeae6e0);
   const snowDirty = new THREE.Color(0xb6b0a4);
 
@@ -177,7 +177,10 @@ export function buildTerrainMesh(heights: number[][], isTrack: boolean[][]): THR
         const x = (i / (res - 1) - 0.5) * TERRAIN_SIZE;
         const z = ((res - 1 - jFlipped) / (res - 1) - 0.5) * TERRAIN_SIZE;
         const dist = Math.abs(x - trackXAt(z));
-        c = dist < 1.4 ? rut : dirt;
+        // Three-band road: shoulder edge → asphalt → darker centerline rut.
+        if (dist < 1.0) c = asphaltCenter;
+        else if (dist < 3.6) c = asphalt;
+        else c = shoulder;
       } else {
         const slope = slopeAt(i, jFlipped);
         // Hard zone selection — Kurdistan forest-steppe, not desert.
@@ -498,13 +501,13 @@ export function buildBorderLine(): THREE.Line {
   return line;
 }
 
-// — Asphalt road mesh. Real geometry sitting ~5cm above terrain, following
-// the track curve. Dark surface + center-line dashes. Replaces the
-// vertex-color-baked dirt look with something that reads as a real road.
+// — Road markings only. The asphalt is baked into the terrain vertex colors
+// (see buildTerrainMesh) — that prevents z-fighting + sinking. This function
+// just adds the center-line dashes as small meshes with polygon offset.
 export function buildAsphaltRoad(heights: number[][]): THREE.Group {
   const g = new THREE.Group();
   const halfWidth = 4.2;
-  const segments = 280; // fine subdivision so road follows terrain curvature
+  const segments = 280;
   const zStart = -TERRAIN_SIZE / 2 + 5;
   const zEnd = TERRAIN_SIZE / 2 - 5;
   const trackXAt = (z: number) => {
@@ -512,103 +515,8 @@ export function buildAsphaltRoad(heights: number[][]): THREE.Group {
     return Math.sin(zNorm * 2.4) * 12 + Math.sin(zNorm * 5.7) * 3;
   };
 
-  // Road surface: BufferGeometry triangle strip.
-  const positions: number[] = [];
-  const indices: number[] = [];
-  const uvs: number[] = [];
-
-  for (let i = 0; i <= segments; i++) {
-    const t = i / segments;
-    const z = zStart + t * (zEnd - zStart);
-    const cx = trackXAt(z);
-    const cy = sampleHeight(cx, z, heights);
-    // Tangent direction along z.
-    const dz = (zEnd - zStart) / segments;
-    const cxNext = trackXAt(z + dz);
-    const tx = cxNext - cx;
-    const tz = dz;
-    const tlen = Math.hypot(tx, tz);
-    const nx = -tz / tlen; // perpendicular (right-hand)
-    const nz =  tx / tlen;
-    // Sample height under each edge so the road conforms to terrain.
-    const lx = cx + nx * halfWidth, lz = z + nz * halfWidth;
-    const rx = cx - nx * halfWidth, rz = z - nz * halfWidth;
-    // Sample at edges with a moderate lift. With 280 segments (~1.1m each),
-    // road follows terrain closely enough that 0.18m clears typical curvature
-    // between heightfield grid samples without looking floaty.
-    const ly = sampleHeight(lx, lz, heights) + 0.18;
-    const ry = sampleHeight(rx, rz, heights) + 0.18;
-    positions.push(lx, ly, lz);
-    positions.push(rx, ry, rz);
-    uvs.push(0, t * 30);
-    uvs.push(1, t * 30);
-  }
-  for (let i = 0; i < segments; i++) {
-    const a = i * 2, b = i * 2 + 1, c = (i + 1) * 2, d = (i + 1) * 2 + 1;
-    indices.push(a, b, c);
-    indices.push(b, d, c);
-  }
-  const geo = new THREE.BufferGeometry();
-  geo.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
-  geo.setAttribute("uv", new THREE.Float32BufferAttribute(uvs, 2));
-  geo.setIndex(indices);
-  geo.computeVertexNormals();
-
-  const surfaceMat = new THREE.MeshStandardMaterial({
-    color: 0x1a1a1c,
-    roughness: 0.85,
-    metalness: 0.05,
-    side: THREE.DoubleSide,
-    polygonOffset: true,         // depth bias — road wins z-fight vs terrain
-    polygonOffsetFactor: -2,
-    polygonOffsetUnits: -4,
-  });
-  const road = new THREE.Mesh(geo, surfaceMat);
-  road.receiveShadow = true;
-  g.add(road);
-
-  // Shoulder strips (lighter beige) on each side — read as graded earth verge.
-  const shoulderHalf = 0.4;
-  const shoulderMat = new THREE.MeshStandardMaterial({
-    color: 0x8a7556, roughness: 1.0, side: THREE.DoubleSide,
-    polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -3,
-  });
-  for (const side of [-1, 1]) {
-    const sPos: number[] = [];
-    const sIdx: number[] = [];
-    for (let i = 0; i <= segments; i++) {
-      const t = i / segments;
-      const z = zStart + t * (zEnd - zStart);
-      const cx = trackXAt(z);
-      const dz = (zEnd - zStart) / segments;
-      const cxNext = trackXAt(z + dz);
-      const tx = cxNext - cx, tz = dz;
-      const tlen = Math.hypot(tx, tz);
-      const nx = -tz / tlen, nz = tx / tlen;
-      const innerX = cx + side * nx * halfWidth;
-      const innerZ = z + side * nz * halfWidth;
-      const outerX = cx + side * nx * (halfWidth + shoulderHalf * 2);
-      const outerZ = z + side * nz * (halfWidth + shoulderHalf * 2);
-      const innerY = sampleHeight(innerX, innerZ, heights) + 0.16;
-      const outerY = sampleHeight(outerX, outerZ, heights) + 0.10;
-      sPos.push(innerX, innerY, innerZ);
-      sPos.push(outerX, outerY, outerZ);
-    }
-    for (let i = 0; i < segments; i++) {
-      const a = i * 2, b = i * 2 + 1, c = (i + 1) * 2, d = (i + 1) * 2 + 1;
-      if (side > 0) { sIdx.push(a, b, c); sIdx.push(b, d, c); }
-      else          { sIdx.push(b, a, c); sIdx.push(d, b, c); } // reverse winding so normals face up
-    }
-    const sgeo = new THREE.BufferGeometry();
-    sgeo.setAttribute("position", new THREE.Float32BufferAttribute(sPos, 3));
-    sgeo.setIndex(sIdx);
-    sgeo.computeVertexNormals();
-    const shoulder = new THREE.Mesh(sgeo, shoulderMat);
-    shoulder.receiveShadow = true;
-    g.add(shoulder);
-  }
-
-  // Center-line dashes — short white segments sampled along the curve.
+  // Center-line dashes — small meshes with polygon offset so they sit just
+  // above the (vertex-colored) terrain road surface without z-fighting.
   const dashMat = new THREE.MeshBasicMaterial({
     color: 0xfffbe8, fog: true,
     polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -6,
@@ -621,7 +529,7 @@ export function buildAsphaltRoad(heights: number[][]): THREE.Group {
   for (let i = 0; i < dashCount; i++) {
     const z = zStart + i * dashSpacing + dashSpacing / 2;
     const cx = trackXAt(z);
-    const cy = sampleHeight(cx, z, heights) + 0.21;
+    const cy = sampleHeight(cx, z, heights) + 0.04; // sit just above terrain; polygon offset wins z-fight
     const dash = new THREE.Mesh(dashGeo, dashMat);
     dash.position.set(cx, cy, z);
     // Orient along tangent.
