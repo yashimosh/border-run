@@ -117,24 +117,32 @@ function init(kind: VehicleKind) {
 
   const scene = new THREE.Scene();
 
-  // — Sky: Preetham/Hosek-Wilkie atmospheric scattering. Sun position drives
-  // both the sky color and the directional light direction below.
+  // — Sky: Preetham atmospheric scattering, sun position drives lighting.
   const sky = new Sky();
   sky.scale.setScalar(15000);
   const skyMat = sky.material as THREE.ShaderMaterial & { uniforms: any };
-  skyMat.uniforms.turbidity.value = 4.5;       // haze level (higher = hazier)
-  skyMat.uniforms.rayleigh.value = 1.6;        // blue scatter intensity
-  skyMat.uniforms.mieCoefficient.value = 0.006; // sun halo / horizon glow
-  skyMat.uniforms.mieDirectionalG.value = 0.86; // sun forward-scattering
-  // Sun position: low + east-of-zenith for a dawn read.
+  skyMat.uniforms.turbidity.value = 4.5;
+  skyMat.uniforms.rayleigh.value = 1.6;
+  skyMat.uniforms.mieCoefficient.value = 0.006;
+  skyMat.uniforms.mieDirectionalG.value = 0.86;
+  // Sun position is animated by the day/night cycle below — start at dawn.
   const sunPosition = new THREE.Vector3();
-  const sunPhi = THREE.MathUtils.degToRad(90 - 14);   // 14° above horizon
-  const sunTheta = THREE.MathUtils.degToRad(58);       // azimuth (east-southeast)
-  sunPosition.setFromSphericalCoords(1, sunPhi, sunTheta);
-  skyMat.uniforms.sunPosition.value.copy(sunPosition);
+  let dayTime = 0.18; // 0..1 — 0=midnight, 0.25=dawn, 0.5=noon, 0.75=dusk
+  const updateSun = () => {
+    // Map dayTime to elevation + azimuth. Dawn at 0.25 brings sun to 14°.
+    const elevation = Math.sin(dayTime * Math.PI * 2) * 50; // -50..+50°
+    const azimuth = (dayTime * 360 - 90) % 360; // sun moves east → west
+    const phi = THREE.MathUtils.degToRad(90 - elevation);
+    const theta = THREE.MathUtils.degToRad(azimuth);
+    sunPosition.setFromSphericalCoords(1, phi, theta);
+    skyMat.uniforms.sunPosition.value.copy(sunPosition);
+  };
+  updateSun();
   scene.add(sky);
 
-  scene.fog = new THREE.Fog(0xb09a82, 90, 380);
+  // Stronger atmospheric depth — Over-the-Hill diorama feel. Fog dissolves
+  // distance into a warm dawn haze.
+  scene.fog = new THREE.Fog(0xc7b89a, 60, 280);
 
   // IBL probe for chrome/glass fill. Cheap RoomEnvironment is fine here — the
   // sky shader handles the visible atmosphere, we just need soft reflections.
@@ -489,6 +497,9 @@ function init(kind: VehicleKind) {
       case "BracketLeft": if (down) radio.bumpVolume(-0.1); break;
       case "BracketRight": if (down) radio.bumpVolume(0.1); break;
       case "KeyH": if (down) honk(audio.ctx, audio.master); break;
+      case "KeyP": if (down) { setPhotoMode(!photoMode); flash(photoMode ? "photo mode" : "drive mode"); } break;
+      case "Comma":  if (down) { dayTime = (dayTime - 0.05 + 1) % 1; flash(`time ${(dayTime * 24).toFixed(1)}h`); } break;
+      case "Period": if (down) { dayTime = (dayTime + 0.05) % 1; flash(`time ${(dayTime * 24).toFixed(1)}h`); } break;
       default: handled = false;
     }
     if (handled) e.preventDefault();
@@ -615,6 +626,35 @@ function init(kind: VehicleKind) {
     onUpdate: () => camera.updateProjectionMatrix(),
     onComplete: () => { introDone = true; },
   });
+
+  // — Photo mode (P key). Pauses world, hides HUD, free orbit camera.
+  // Click + drag to rotate around the truck; scroll to zoom.
+  let photoMode = false;
+  const photoOrbit = { theta: 0, phi: Math.PI / 3, radius: 14, target: new THREE.Vector3() };
+  let dragging = false;
+  let lastMouse = { x: 0, y: 0 };
+  function setPhotoMode(on: boolean) {
+    photoMode = on;
+    document.body.classList.toggle("photo-mode", on);
+    if (on) {
+      // Initialize orbit target on the truck position.
+      photoOrbit.target.copy(vehicle.chassisMesh.position);
+    }
+  }
+  window.addEventListener("mousedown", (e) => { if (photoMode) { dragging = true; lastMouse = { x: e.clientX, y: e.clientY }; } });
+  window.addEventListener("mouseup", () => { dragging = false; });
+  window.addEventListener("mousemove", (e) => {
+    if (!photoMode || !dragging) return;
+    const dx = e.clientX - lastMouse.x;
+    const dy = e.clientY - lastMouse.y;
+    photoOrbit.theta -= dx * 0.005;
+    photoOrbit.phi = Math.max(0.1, Math.min(Math.PI - 0.1, photoOrbit.phi - dy * 0.005));
+    lastMouse = { x: e.clientX, y: e.clientY };
+  });
+  window.addEventListener("wheel", (e) => {
+    if (!photoMode) return;
+    photoOrbit.radius = Math.max(4, Math.min(60, photoOrbit.radius + e.deltaY * 0.02));
+  }, { passive: true });
 
   // Loop.
   const clock = new THREE.Clock();
@@ -795,6 +835,40 @@ function init(kind: VehicleKind) {
     hudLoad.textContent = `${cargoStatus.secured}/${cargoStatus.total}`;
     if (cargoStatus.justLost) {
       flash(cargoStatus.justLost.kind === "tarp" ? "load shifted" : "lost a can");
+    }
+
+    // Day/night cycle — slow real-time advance (full cycle in ~12 minutes).
+    // Skip in photo mode so the user can frame a moment.
+    if (!photoMode) dayTime = (dayTime + dt / (12 * 60)) % 1;
+    updateSun();
+    // Sync directional light direction + intensity + color to sun position.
+    sun.position.copy(sunPosition).multiplyScalar(150);
+    const sunY = sunPosition.y; // -1..+1 sky vector
+    const dayness = Math.max(0, sunY);
+    sun.intensity = dayness * 1.6 + 0.05;
+    // Warm sunrise / sunset, cool blue night.
+    const warm = new THREE.Color(0xffd9a8);
+    const noon = new THREE.Color(0xfff0d8);
+    const night = new THREE.Color(0x4a5266);
+    if (dayness > 0.4) sun.color.copy(noon);
+    else if (sunY > 0)  sun.color.copy(warm);
+    else                sun.color.copy(night);
+    hemi.intensity = 0.25 + dayness * 0.5;
+
+    // Camera: drive-mode chase cam OR photo-mode orbit.
+    if (photoMode) {
+      // Smoothly follow the truck position as orbit target.
+      photoOrbit.target.lerp(vehicle.chassisMesh.position, Math.min(1, dt * 4));
+      const x = photoOrbit.target.x + Math.sin(photoOrbit.theta) * Math.sin(photoOrbit.phi) * photoOrbit.radius;
+      const y = photoOrbit.target.y + Math.cos(photoOrbit.phi) * photoOrbit.radius;
+      const z = photoOrbit.target.z + Math.cos(photoOrbit.theta) * Math.sin(photoOrbit.phi) * photoOrbit.radius;
+      camera.position.set(x, y, z);
+      camera.lookAt(photoOrbit.target);
+      // Skip the rest of the standard camera path.
+      // Render and return.
+      postfx.render(dt);
+      requestAnimationFrame(tick);
+      return;
     }
 
     // Camera follow.

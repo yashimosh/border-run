@@ -159,6 +159,8 @@ export function buildTerrainMesh(heights: number[][], isTrack: boolean[][]): THR
       const h = heights[i][jFlipped];
       pos.setY(idx, h);
 
+      // Art-of-Rally / Over-the-Hill style: bold color blocking, no smooth
+      // gradients, hard transitions between zones. Fewer tones, stronger reads.
       let c: THREE.Color;
       if (isTrack[i][jFlipped]) {
         const x = (i / (res - 1) - 0.5) * TERRAIN_SIZE;
@@ -167,34 +169,21 @@ export function buildTerrainMesh(heights: number[][], isTrack: boolean[][]): THR
         c = dist < 1.4 ? rut : dirt;
       } else {
         const slope = slopeAt(i, jFlipped);
-        // Snow line: high altitude on gentle-to-medium slopes accumulates snow;
-        // very steep slopes stay rocky (snow doesn't stick to vertical walls).
-        const snowLine = 22;        // m above sea level where snow starts
-        const fullSnow = 32;        // fully covered above this altitude
-        if (h >= snowLine && slope < 1.8) {
-          const altT = Math.min(1, (h - snowLine) / (fullSnow - snowLine));
-          const slopeFade = Math.max(0, 1 - slope / 1.8); // less snow on steep
-          const blend = altT * slopeFade;
-          // Fully snowy at peak gentle slopes; partial dusting in transition.
-          if (blend > 0.6) c = snow.clone().lerp(snowDirty, 1 - blend);
-          else if (blend > 0.2) {
-            const partial = (blend - 0.2) / 0.4;
-            c = limestone.clone().lerp(snowDirty, partial);
-          } else {
-            // Below blend threshold — rocky.
-            c = limestone.clone().lerp(limestoneShadow, Math.min(1, slope / 2.4));
-          }
-        } else if (slope > 1.4) {
-          const t = Math.min(1, (slope - 1.4) / 1.5);
-          c = limestone.clone().lerp(limestoneShadow, t);
-        } else if (slope > 0.7) {
-          const t = (slope - 0.7) / 0.7;
-          c = scrubDry.clone().lerp(limestone, t);
+        // Hard zone selection — pick ONE color per band, no blending.
+        if (h >= 24 && slope < 1.6) {
+          c = snow;             // alpine snow cap
+        } else if (h >= 18 && slope < 1.4) {
+          c = snowDirty;        // patchy snow line
+        } else if (slope > 1.6) {
+          c = limestoneShadow;  // steep cliff face
+        } else if (slope > 0.9) {
+          c = limestone;        // sloped limestone outcrop
         } else if (h < -0.4) {
-          c = sand;
+          c = sand;             // low pocket
+        } else if (h > 8) {
+          c = scrubDry;         // high scrub
         } else {
-          const variance = ((Math.sin(i * 0.7) + Math.cos(j * 0.9)) * 0.5 + 0.5) * 0.3;
-          c = scrub.clone().lerp(scrubDry, variance);
+          c = scrub;             // baseline scrub steppe
         }
       }
       colors[idx * 3] = c.r;

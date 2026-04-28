@@ -57,6 +57,9 @@
       #event.show { opacity: 1; }
 
       .colophon { position: fixed; bottom: 12px; right: 14px; font-size: 10px; opacity: 0.4; }
+      body.photo-mode .hud, body.photo-mode .colophon, body.photo-mode #event { opacity: 0 !important; pointer-events: none; transition: opacity 300ms; }
+      body.photo-mode #stage { cursor: grab; }
+      body.photo-mode #stage:active { cursor: grabbing; }
       .colophon a { color: inherit; }
 
       #loader {
@@ -189,7 +192,7 @@
 
     <div class="hud bl">
       <div><kbd>W</kbd> <kbd>A</kbd> <kbd>S</kbd> <kbd>D</kbd> drive · <kbd>F</kbd> boost · <kbd>Shift</kbd> handbrake · <kbd>Space</kbd> brake · <kbd>R</kbd> reset</div>
-      <div style="margin-top:6px;opacity:0.7"><kbd>H</kbd> horn · <kbd>B</kbd> radio · <kbd>N</kbd> next station · <kbd>[</kbd> <kbd>]</kbd> volume · <kbd>M</kbd> mute</div>
+      <div style="margin-top:6px;opacity:0.7"><kbd>H</kbd> horn · <kbd>B</kbd> radio · <kbd>N</kbd> next station · <kbd>[</kbd> <kbd>]</kbd> volume · <kbd>M</kbd> mute · <kbd>P</kbd> photo · <kbd>,</kbd> <kbd>.</kbd> time</div>
     </div>
 
     <div id="title">
