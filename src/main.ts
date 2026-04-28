@@ -54,10 +54,15 @@ function boot() {
   };
 
   start?.addEventListener("click", () => {
-    doorClickHowl.play();
-    // GSAP intro tween: fade title, then start the engine.
-    gsap.to(title!, { opacity: 0, duration: 0.4, onComplete: () => title?.classList.add("hidden") });
-    gsap.delayedCall(0.2, () => init(readChoice()));
+    try { doorClickHowl.play(); } catch {}
+    // Fade title via CSS transition (defined in index.html). Init immediately —
+    // don't wait on GSAP's ticker (which can stall in some autoplay/throttle cases).
+    if (title) {
+      title.style.transition = "opacity 400ms ease";
+      title.style.opacity = "0";
+      setTimeout(() => title.classList.add("hidden"), 420);
+    }
+    init(readChoice());
   }, { once: true });
 
   // Allow keyboard shortcut: 1 picks FJ40, 2 picks HJ75. Either also dismisses title.
