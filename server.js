@@ -195,6 +195,46 @@ app.post("/api/feedback", async (req, res) => {
 // Health check.
 app.get("/api/health", (req, res) => res.json({ ok: true, resendConfigured: !!resend }));
 
+// Live radio proxy. Browsers can't play `http://` streams on an HTTPS page
+// (mixed content blocking) and many streams lack CORS headers. This endpoint
+// resolves a radio.garden station ID → actual stream URL → proxies bytes.
+// User-Agent spoofed because some upstream Icecast servers reject default node UA.
+const STREAM_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+app.get("/api/radio-stream/:id", async (req, res) => {
+  const id = String(req.params.id || "").replace(/[^A-Za-z0-9]/g, "").slice(0, 24);
+  if (!id) return res.status(400).end("bad id");
+  try {
+    const garden = await fetch(`https://radio.garden/api/ara/content/listen/${id}/channel.mp3`, {
+      redirect: "manual",
+      headers: { "User-Agent": STREAM_UA },
+    });
+    const streamUrl = garden.headers.get("location");
+    if (!streamUrl || !/^https?:\/\//i.test(streamUrl)) {
+      return res.status(502).end("no stream resolved");
+    }
+    const upstream = await fetch(streamUrl, {
+      headers: { "User-Agent": STREAM_UA, "Icy-MetaData": "1" },
+    });
+    if (!upstream.ok) return res.status(502).end("upstream not ok");
+    res.setHeader("Content-Type", upstream.headers.get("content-type") || "audio/mpeg");
+    res.setHeader("Cache-Control", "no-store");
+    res.setHeader("Access-Control-Allow-Origin", "*");
+    // Stream the body. Express + Node 22 fetch returns a WHATWG ReadableStream.
+    if (upstream.body) {
+      // Convert to Node stream and pipe.
+      const { Readable } = await import("node:stream");
+      const nodeStream = Readable.fromWeb(upstream.body);
+      req.on("close", () => { try { nodeStream.destroy(); } catch {} });
+      nodeStream.pipe(res);
+    } else {
+      res.end();
+    }
+  } catch (err) {
+    console.warn("[radio-stream]", id, err && err.message ? err.message : err);
+    if (!res.headersSent) res.status(502).end("proxy error");
+  }
+});
+
 // Auto-discover radio tracks: any audio file dropped into public/radio/
 // becomes a station automatically. The filename (without extension) is the
 // station name. Underscores → spaces. Numeric prefix "01-" stripped for

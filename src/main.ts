@@ -427,6 +427,7 @@ function init(kind: VehicleKind) {
       case "KeyR": if (down) resetVehicle(); break;
       case "KeyM": if (down) {
         const muted = audio.toggleMute();
+        radio.setMuted(muted); // live streams live outside Web Audio — sync separately
         flash(muted ? "muted" : "sound on");
       } break;
       case "KeyB": if (down) radio.toggle(); break;

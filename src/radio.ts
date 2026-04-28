@@ -9,13 +9,28 @@ export type ProceduralMode = "drift" | "song-slow" | "song-mid" | "kurdish";
 
 export interface RadioStation {
   name: string;
-  url?: string;        // relative path, e.g. "/radio/track1.mp3"
-  procedural?: ProceduralMode; // if set, generate synth instead of playing a file
+  url?: string;                  // relative file path or absolute stream URL
+  procedural?: ProceduralMode;   // generate synth
+  live?: boolean;                // real radio: play via HTMLAudioElement direct (skip Web Audio)
+  city?: string;                 // shown in HUD: "kurdsat · slemani"
 }
 
+// Live Kurdistan radio stations — verified working as of build time.
+// Sulaymaniyah stations route through /api/radio-stream/{id} (server proxies
+// http→https + adds CORS). Other Kurdish stations stream direct over HTTPS.
+export const LIVE_STATIONS: RadioStation[] = [
+  { name: "kurdsat",          city: "slemani",  live: true, url: "/api/radio-stream/sKGvBzaL" },
+  { name: "dwarozh",          city: "slemani",  live: true, url: "/api/radio-stream/uhVCT2ab" },
+  { name: "mihrab fm 104.9",  city: "slemani",  live: true, url: "/api/radio-stream/fiO9aBTD" },
+  { name: "sunnat 106.9",     city: "slemani",  live: true, url: "/api/radio-stream/o10CcVUh" },
+  { name: "rudaw news",       city: "kurdistan", live: true, url: "https://l3.itworkscdn.net/itwaudio/9006/stream" },
+  { name: "denge qamishlo",   city: "rojava",   live: true, url: "https://dengeqamishlo.stream.laut.fm/dengeqamishlo" },
+  { name: "kurd1 fm",         city: "diaspora", live: true, url: "https://listen.radioking.com/radio/119251/stream/158701" },
+];
+
 export const DEFAULT_STATIONS: RadioStation[] = [
-  // Procedural fallback stations. Real audio files dropped into public/radio/
-  // are auto-discovered via /api/radio-tracks and prepended ahead of these.
+  ...LIVE_STATIONS,
+  // Procedural fallbacks behind the real stations.
   { name: "qandil fm", procedural: "kurdish" },
   { name: "تهران ۱", procedural: "song-mid" },
   { name: "longwave / drift", procedural: "drift" },
@@ -47,6 +62,8 @@ export class Radio {
   private staticGain: GainNode;
   private audioEl: HTMLAudioElement | null = null;
   private mediaSrc: MediaElementAudioSourceNode | null = null;
+  private liveAudioEl: HTMLAudioElement | null = null; // direct HTML5 audio for live streams
+  private liveMuted = false;
   private procedural: ProceduralPlayer | null = null;
   private stations: RadioStation[];
   private currentIdx = -1;
@@ -109,6 +126,10 @@ export class Radio {
       this.audioEl.src = "";
       this.audioEl = null;
     }
+    if (this.liveAudioEl) {
+      try { this.liveAudioEl.pause(); this.liveAudioEl.src = ""; } catch {}
+      this.liveAudioEl = null;
+    }
     if (this.mediaSrc) {
       try { this.mediaSrc.disconnect(); } catch {}
       this.mediaSrc = null;
@@ -128,6 +149,28 @@ export class Radio {
     if (s.procedural) {
       this.procedural = new ProceduralPlayer(this.ctx, this.filter, s.procedural);
       this.procedural.start();
+      this.updateHud();
+      this.flashTuneIndicator();
+      return;
+    }
+    if (s.live && s.url) {
+      // Live stream: play HTMLAudioElement directly (no Web Audio routing).
+      // Skips CORS issues with createMediaElementSource on cross-origin streams,
+      // and bypasses our AM filter — real Kurdish stations don't need fake AM
+      // character on top, the broadcast already sounds like radio.
+      const el = new Audio(s.url);
+      el.crossOrigin = "anonymous"; // best-effort; fine if server doesn't honor
+      el.preload = "auto";
+      el.volume = this.liveMuted ? 0 : this.volume;
+      el.addEventListener("error", () => {
+        console.warn("live stream failed:", s.name);
+        this.fadeInStatic();
+      });
+      el.play().catch(err => {
+        console.warn("live play() rejected:", err);
+        this.fadeInStatic();
+      });
+      this.liveAudioEl = el;
       this.updateHud();
       this.flashTuneIndicator();
       return;
@@ -179,10 +222,18 @@ export class Radio {
   setVolume(v: number) {
     this.volume = Math.max(0, Math.min(1, v));
     this.outGain.gain.setTargetAtTime(this.volume, this.ctx.currentTime, 0.05);
+    if (this.liveAudioEl) this.liveAudioEl.volume = this.liveMuted ? 0 : this.volume;
     this.updateHud();
   }
 
   bumpVolume(d: number) { this.setVolume(this.volume + d); }
+
+  // Sync mute state with the master AudioSystem (which handles Web Audio gain).
+  // Live audio elements live outside Web Audio so they need their own mute path.
+  setMuted(muted: boolean) {
+    this.liveMuted = muted;
+    if (this.liveAudioEl) this.liveAudioEl.volume = muted ? 0 : this.volume;
+  }
 
   private updateHud() {
     if (!this.hudEl) return;
@@ -190,8 +241,10 @@ export class Radio {
       this.hudEl.textContent = "off";
     } else {
       const s = this.stations[this.currentIdx];
-      const status = s.url ? s.name : `${s.name} · static`;
-      this.hudEl.textContent = `${status} · vol ${Math.round(this.volume * 100)}`;
+      const tag = s.live ? "live" : s.url ? "" : "static";
+      const cityPart = s.city ? ` · ${s.city}` : "";
+      const tagPart = tag ? ` · ${tag}` : "";
+      this.hudEl.textContent = `${s.name}${cityPart}${tagPart} · vol ${Math.round(this.volume * 100)}`;
     }
   }
 
