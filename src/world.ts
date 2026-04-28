@@ -176,13 +176,9 @@ export function buildTerrainMesh(heights: number[][], isTrack: boolean[][]): THR
       // gradients, hard transitions between zones. Fewer tones, stronger reads.
       let c: THREE.Color;
       if (isTrack[i][jFlipped]) {
-        const x = (i / (res - 1) - 0.5) * TERRAIN_SIZE;
-        const z = ((res - 1 - jFlipped) / (res - 1) - 0.5) * TERRAIN_SIZE;
-        const dist = Math.abs(x - trackXAt(z));
-        // Three-band road: shoulder edge → asphalt → darker centerline rut.
-        if (dist < 1.0) c = asphaltCenter;
-        else if (dist < 3.6) c = asphalt;
-        else c = shoulder;
+        // Track cells get asphalt baked-in too as a fallback in case the
+        // road mesh has gaps. The mesh draws on top via polygon offset.
+        c = asphalt;
       } else {
         const slope = slopeAt(i, jFlipped);
         // Hard zone selection — Kurdistan forest-steppe, not desert.
@@ -507,13 +503,101 @@ export function buildBorderLine(): THREE.Line {
   return line;
 }
 
-// — Road markings only. The asphalt is baked into the terrain vertex colors
-// (see buildTerrainMesh) — that prevents z-fighting + sinking. This function
-// just adds the center-line dashes as small meshes with polygon offset.
+// — Road mesh: flat dark strip following the track curve. Uses
+// MeshBasicMaterial (no light interaction — stays consistently dark
+// regardless of hemi/sun) + heavy polygon offset so it always wins
+// the z-fight against the terrain mesh. This is the version that
+// actually looks like a road.
 export function buildAsphaltRoad(heights: number[][]): THREE.Group {
   const g = new THREE.Group();
   const halfWidth = 4.2;
   const segments = 280;
+  const trackXAt = (z: number) => {
+    const zNorm = z / TERRAIN_SIZE;
+    return Math.sin(zNorm * 2.4) * 12 + Math.sin(zNorm * 5.7) * 3;
+  };
+  const zStart = -TERRAIN_SIZE / 2 + 5;
+  const zEnd = TERRAIN_SIZE / 2 - 5;
+
+  // Build the strip.
+  const positions: number[] = [];
+  const indices: number[] = [];
+  for (let i = 0; i <= segments; i++) {
+    const t = i / segments;
+    const z = zStart + t * (zEnd - zStart);
+    const cx = trackXAt(z);
+    const dz = (zEnd - zStart) / segments;
+    const cxNext = trackXAt(z + dz);
+    const tx = cxNext - cx, tz = dz;
+    const tlen = Math.hypot(tx, tz);
+    const nx = -tz / tlen, nz = tx / tlen;
+    const lx = cx + nx * halfWidth, lz = z + nz * halfWidth;
+    const rx = cx - nx * halfWidth, rz = z - nz * halfWidth;
+    const ly = sampleHeight(lx, lz, heights) + 0.08;
+    const ry = sampleHeight(rx, rz, heights) + 0.08;
+    positions.push(lx, ly, lz, rx, ry, rz);
+  }
+  for (let i = 0; i < segments; i++) {
+    const a = i * 2, b = i * 2 + 1, c = (i + 1) * 2, d = (i + 1) * 2 + 1;
+    indices.push(a, b, c);
+    indices.push(b, d, c);
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+  geo.setIndex(indices);
+  geo.computeVertexNormals();
+
+  const surfaceMat = new THREE.MeshBasicMaterial({
+    color: 0x2a2a2c,             // visible dark grey (basic = no lighting wash)
+    side: THREE.DoubleSide,
+    fog: true,
+    polygonOffset: true,
+    polygonOffsetFactor: -3,
+    polygonOffsetUnits: -8,
+    depthWrite: true,
+  });
+  const road = new THREE.Mesh(geo, surfaceMat);
+  road.renderOrder = 1; // ensure it draws after terrain
+  g.add(road);
+
+  // Shoulder strips on each side.
+  const shoulderHalf = 0.5;
+  const shoulderMat = new THREE.MeshBasicMaterial({
+    color: 0x6e604a, side: THREE.DoubleSide, fog: true,
+    polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -7,
+  });
+  for (const side of [-1, 1]) {
+    const sPos: number[] = [];
+    const sIdx: number[] = [];
+    for (let i = 0; i <= segments; i++) {
+      const t = i / segments;
+      const z = zStart + t * (zEnd - zStart);
+      const cx = trackXAt(z);
+      const dz = (zEnd - zStart) / segments;
+      const cxNext = trackXAt(z + dz);
+      const tx = cxNext - cx, tz = dz;
+      const tlen = Math.hypot(tx, tz);
+      const nx = -tz / tlen, nz = tx / tlen;
+      const innerX = cx + side * nx * halfWidth;
+      const innerZ = z + side * nz * halfWidth;
+      const outerX = cx + side * nx * (halfWidth + shoulderHalf * 2);
+      const outerZ = z + side * nz * (halfWidth + shoulderHalf * 2);
+      const innerY = sampleHeight(innerX, innerZ, heights) + 0.07;
+      const outerY = sampleHeight(outerX, outerZ, heights) + 0.04;
+      sPos.push(innerX, innerY, innerZ, outerX, outerY, outerZ);
+    }
+    for (let i = 0; i < segments; i++) {
+      const a = i * 2, b = i * 2 + 1, c = (i + 1) * 2, d = (i + 1) * 2 + 1;
+      sIdx.push(a, b, c, b, d, c);
+    }
+    const sgeo = new THREE.BufferGeometry();
+    sgeo.setAttribute("position", new THREE.Float32BufferAttribute(sPos, 3));
+    sgeo.setIndex(sIdx);
+    sgeo.computeVertexNormals();
+    const shoulder = new THREE.Mesh(sgeo, shoulderMat);
+    shoulder.renderOrder = 1;
+    g.add(shoulder);
+  }
   const zStart = -TERRAIN_SIZE / 2 + 5;
   const zEnd = TERRAIN_SIZE / 2 - 5;
   const trackXAt = (z: number) => {
@@ -535,7 +619,7 @@ export function buildAsphaltRoad(heights: number[][]): THREE.Group {
   for (let i = 0; i < dashCount; i++) {
     const z = zStart + i * dashSpacing + dashSpacing / 2;
     const cx = trackXAt(z);
-    const cy = sampleHeight(cx, z, heights) + 0.04; // sit just above terrain; polygon offset wins z-fight
+    const cy = sampleHeight(cx, z, heights) + 0.10; // just above road mesh (which is at +0.08m)
     const dash = new THREE.Mesh(dashGeo, dashMat);
     dash.position.set(cx, cy, z);
     // Orient along tangent.
