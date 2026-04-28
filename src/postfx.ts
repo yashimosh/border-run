@@ -57,12 +57,12 @@ export function createPostFx(renderer: THREE.WebGLRenderer, scene: THREE.Scene, 
     offset: 0.32,
   });
 
-  // Depth-of-field — much lighter than before. Bokeh scale lowered for perf
-  // and to stop drowning the road in blur.
+  // Depth-of-field — minimal blur. Just enough to soften horizon, not
+  // wash everything out.
   const dof = new DepthOfFieldEffect(camera, {
-    focusDistance: 0.018,
-    focalLength: 0.10,
-    bokehScale: 1.2,
+    focusDistance: 0.02,
+    focalLength: 0.20,
+    bokehScale: 0.6,
   });
 
   // Color grading — slight cool shift in shadows, warm in highlights;

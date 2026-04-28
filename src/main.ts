@@ -146,9 +146,9 @@ function init(kind: VehicleKind) {
   updateSun();
   scene.add(sky);
 
-  // Stronger atmospheric depth — Over-the-Hill diorama feel. Fog dissolves
-  // distance into a warm dawn haze.
-  scene.fog = new THREE.Fog(0xc7b89a, 60, 280);
+  // Atmospheric depth without washing the visible scene. Cooler grey-blue
+  // fog so the terrain colors read instead of all going tan.
+  scene.fog = new THREE.Fog(0xa8b0b8, 140, 480);
 
   // IBL probe for chrome/glass fill. Cheap RoomEnvironment is fine here — the
   // sky shader handles the visible atmosphere, we just need soft reflections.
