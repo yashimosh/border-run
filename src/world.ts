@@ -241,7 +241,10 @@ export function sampleSlope(x: number, z: number, heights: number[][]): number {
 export type TerrainZone = "track" | "snow" | "rock" | "sand" | "scrub";
 
 // Classify what's under the wheels — drives per-region grip + engine power.
-// Mirrors the buildTerrainMesh shading logic so visual zones === physical zones.
+// CRITICAL: isTrack[i][j] is filled in buildHeights with j mapping z=-half to j=0,
+// but the rendering (and our sampleHeight) flips j (TERRAIN_RES-1-j). For
+// classifyZone to read the SAME visual cell that buildTerrainMesh shaded,
+// we have to apply the same flip.
 export function classifyZone(
   x: number, z: number,
   heights: number[][],
@@ -251,9 +254,10 @@ export function classifyZone(
   const u = (x + TERRAIN_SIZE / 2) / elementSize;
   const v = (TERRAIN_SIZE / 2 - z) / elementSize;
   const i = Math.max(0, Math.min(TERRAIN_RES - 1, Math.floor(u)));
-  const j = Math.max(0, Math.min(TERRAIN_RES - 1, Math.floor(v)));
-  if (isTrack[i][j]) return "track";
-  const h = heights[i][j];
+  const jSampled = Math.max(0, Math.min(TERRAIN_RES - 1, Math.floor(v)));
+  const jFlipped = TERRAIN_RES - 1 - jSampled;
+  if (isTrack[i][jFlipped]) return "track";
+  const h = heights[i][jSampled]; // sampleHeight uses jSampled, not flipped
   const slope = sampleSlope(x, z, heights);
   if (h >= 18 && slope < 1.6) return "snow";
   if (slope > 1.6) return "rock";
