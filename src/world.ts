@@ -598,15 +598,8 @@ export function buildAsphaltRoad(heights: number[][]): THREE.Group {
     shoulder.renderOrder = 1;
     g.add(shoulder);
   }
-  const zStart = -TERRAIN_SIZE / 2 + 5;
-  const zEnd = TERRAIN_SIZE / 2 - 5;
-  const trackXAt = (z: number) => {
-    const zNorm = z / TERRAIN_SIZE;
-    return Math.sin(zNorm * 2.4) * 12 + Math.sin(zNorm * 5.7) * 3;
-  };
 
-  // Center-line dashes — small meshes with polygon offset so they sit just
-  // above the (vertex-colored) terrain road surface without z-fighting.
+  // Center-line dashes (using zStart/zEnd/trackXAt declared above).
   const dashMat = new THREE.MeshBasicMaterial({
     color: 0xfffbe8, fog: true,
     polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -6,
