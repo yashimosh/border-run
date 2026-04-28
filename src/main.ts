@@ -4,11 +4,11 @@
 
 import * as THREE from "three";
 import * as CANNON from "cannon-es";
-import { RoomEnvironment } from "three-stdlib";
+import { RoomEnvironment, Sky } from "three-stdlib";
 import {
   TERRAIN_SIZE, TERRAIN_RES, BORDER_Z,
   buildHeights, buildHeightfieldBody, buildTerrainMesh, sampleHeight,
-  buildSkyGradient, buildSunDisk, buildWatchtower, buildHut, buildDistantRidges,
+  buildWatchtower, buildHut, buildDistantRidges,
   buildRocks, buildScrub, buildBorderPosts, buildBorderLine,
   buildCairn, buildWreck, buildCypress, buildFlagPole,
 } from "./world";
@@ -16,7 +16,10 @@ import {
   buildLimestoneSlab, buildPersianOak, buildStoneWall, buildStream,
   buildVillage, buildGoat, buildPylon, buildPowerLines,
 } from "./scenery";
-import { spawnGoat, spawnBarrel, syncProps, BirdFlock, honk, Prop } from "./props";
+import {
+  spawnGoat, spawnBarrel, syncProps, BirdFlock, honk, Prop,
+  createGoatBrain, updateGoatBrains, GoatBrain, DustHaze,
+} from "./props";
 import { SPECS, VehicleKind, buildVehicle, syncVehicleMeshes, Vehicle } from "./vehicle";
 import { AudioSystem } from "./audio";
 import { Radio, DEFAULT_STATIONS, loadStations } from "./radio";
@@ -112,12 +115,28 @@ function init(kind: VehicleKind) {
   const dev = createDevtools();
 
   const scene = new THREE.Scene();
-  scene.background = buildSkyGradient();
-  scene.fog = new THREE.Fog(0x9aa0a8, 100, 320);
 
-  // IBL for soft fill on chrome/glass — three-stdlib's RoomEnvironment generates
-  // an indoor-ish PMREM probe. Good enough for non-PBR-realism, helps polished
-  // materials read better.
+  // — Sky: Preetham/Hosek-Wilkie atmospheric scattering. Sun position drives
+  // both the sky color and the directional light direction below.
+  const sky = new Sky();
+  sky.scale.setScalar(15000);
+  const skyMat = sky.material as THREE.ShaderMaterial & { uniforms: any };
+  skyMat.uniforms.turbidity.value = 4.5;       // haze level (higher = hazier)
+  skyMat.uniforms.rayleigh.value = 1.6;        // blue scatter intensity
+  skyMat.uniforms.mieCoefficient.value = 0.006; // sun halo / horizon glow
+  skyMat.uniforms.mieDirectionalG.value = 0.86; // sun forward-scattering
+  // Sun position: low + east-of-zenith for a dawn read.
+  const sunPosition = new THREE.Vector3();
+  const sunPhi = THREE.MathUtils.degToRad(90 - 14);   // 14° above horizon
+  const sunTheta = THREE.MathUtils.degToRad(58);       // azimuth (east-southeast)
+  sunPosition.setFromSphericalCoords(1, sunPhi, sunTheta);
+  skyMat.uniforms.sunPosition.value.copy(sunPosition);
+  scene.add(sky);
+
+  scene.fog = new THREE.Fog(0xb09a82, 90, 380);
+
+  // IBL probe for chrome/glass fill. Cheap RoomEnvironment is fine here — the
+  // sky shader handles the visible atmosphere, we just need soft reflections.
   const pmrem = new THREE.PMREMGenerator(renderer);
   scene.environment = pmrem.fromScene(RoomEnvironment(), 0.04).texture;
 
@@ -127,15 +146,17 @@ function init(kind: VehicleKind) {
   const postfx = createPostFx(renderer, scene, camera);
 
   // Lighting — cold dawn.
-  const hemi = new THREE.HemisphereLight(0xa9b4c4, 0x2a2620, 0.7);
+  const hemi = new THREE.HemisphereLight(0xc7c0b2, 0x352e22, 0.55);
   scene.add(hemi);
-  const sun = new THREE.DirectionalLight(0xffd9a8, 0.8);
-  sun.position.set(80, 50, -60);
+  // Sun light direction follows the sky shader's sun position. Warm dawn color.
+  const sun = new THREE.DirectionalLight(0xffd9a8, 1.6);
+  sun.position.copy(sunPosition).multiplyScalar(150);
   sun.castShadow = true;
   sun.shadow.mapSize.set(2048, 2048);
-  sun.shadow.camera.left = -120; sun.shadow.camera.right = 120;
-  sun.shadow.camera.top = 120; sun.shadow.camera.bottom = -120;
-  sun.shadow.camera.near = 1; sun.shadow.camera.far = 250;
+  sun.shadow.camera.left = -180; sun.shadow.camera.right = 180;
+  sun.shadow.camera.top = 180; sun.shadow.camera.bottom = -180;
+  sun.shadow.camera.near = 1; sun.shadow.camera.far = 400;
+  sun.shadow.bias = -0.0003;
   scene.add(sun);
 
   // Physics world.
@@ -171,11 +192,6 @@ function init(kind: VehicleKind) {
   scene.add(buildRocks(heights, isTrack, 75));
   scene.add(buildScrub(heights, isTrack, 260));
   scene.add(buildDistantRidges());
-
-  // Sun disk low over the +z horizon, slightly east. Quietly catches dawn.
-  const sunDisk = buildSunDisk();
-  sunDisk.position.set(45, 22, 380);
-  scene.add(sunDisk);
 
   // Track helper for landmark placement.
   const trackXLocal = (z: number) => Math.sin(z / TERRAIN_SIZE * 2.4) * 12 + Math.sin(z / TERRAIN_SIZE * 5.7) * 3;
@@ -275,8 +291,16 @@ function init(kind: VehicleKind) {
     props.push(spawnBarrel(world, scene, new THREE.Vector3(bx, by, bz)));
   }
 
-  // Birds drifting across the corridor.
-  const birds = new BirdFlock(scene, TERRAIN_SIZE / 2 + 20);
+  // Birds — proper boids flock that avoids the truck.
+  const birds = new BirdFlock(scene, TERRAIN_SIZE / 2 + 20, 18);
+
+  // Atmospheric dust haze — drifting low-alpha particles for the dawn corridor feel.
+  const dust2 = new DustHaze(scene, TERRAIN_SIZE * 0.9, 80);
+
+  // Goat brains — wander + flee from truck. Map all goat props to brains.
+  const goatBrains: GoatBrain[] = props
+    .filter(p => p.kind === "goat")
+    .map(p => createGoatBrain(p));
 
   // Stream-splash detection: track when a wheel transitions from above-water
   // to below-water at the stream crossing (z = -70, water y just under terrain).
@@ -682,6 +706,13 @@ function init(kind: VehicleKind) {
 
     // Dynamic props (goats + barrels) — physics-driven scenery.
     syncProps(props);
+    // Goat AI — wander + flee from truck.
+    updateGoatBrains(
+      goatBrains,
+      new THREE.Vector3(vehicle.chassisBody.position.x, 0, vehicle.chassisBody.position.z),
+      dt,
+      (x, z) => sampleHeight(x, z, heights),
+    );
     // Hit detection: any prop with high relative velocity to the truck just got punted.
     for (const p of props) {
       const dx = p.body.position.x - vehicle.chassisBody.position.x;
@@ -702,8 +733,10 @@ function init(kind: VehicleKind) {
         }
       }
     }
-    // Birds.
-    birds.update(dt);
+    // Birds — pass truck position so they flee.
+    birds.update(dt, new THREE.Vector3(vehicle.chassisBody.position.x, vehicle.chassisBody.position.y, vehicle.chassisBody.position.z));
+    // Atmospheric dust drifts.
+    dust2.update(dt, camera);
 
     // Water-splash detection: when truck Z passes through the stream band,
     // spawn a burst of bluish particles (reusing the dust system, recolored).

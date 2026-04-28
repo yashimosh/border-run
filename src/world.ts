@@ -60,11 +60,17 @@ export function buildHeights(): { heights: number[][]; isTrack: boolean[][] } {
       const z = (j / (TERRAIN_RES - 1) - 0.5) * TERRAIN_SIZE;
       const zNorm = z / TERRAIN_SIZE;
 
-      // Base terrain. Multi-octave noise — Zagros has more vertical articulation
-      // than a smooth gentle valley; the actual terrain reads "lunar" with crumbly
-      // protrusions. Higher amplitude on long-wavelength bands gives that drama.
-      const ridge = Math.max(0, z / TERRAIN_SIZE) * 22;
-      const longRidge = Math.sin(x * 0.018) * 3.2 + Math.cos(z * 0.022) * 2.4;
+      // Multi-octave terrain. Zagros has dramatic vertical articulation —
+      // limestone walls, deep valleys, peaks. Big amplitudes on long
+      // wavelengths drive the silhouette; mid + fine noise add texture.
+      // North side rises sharply to high snow-capped ridge.
+      const zNormPos = Math.max(0, z / TERRAIN_SIZE);
+      // Quadratic ramp toward the north so the mountains feel like *mountains*.
+      const ridge = zNormPos * zNormPos * 60 + zNormPos * 8;
+      // Big folded ridges (limestone monoclines).
+      const bigFold = Math.sin(x * 0.013 + z * 0.005) * 5.5
+                    + Math.cos(z * 0.018 - x * 0.003) * 4.0;
+      const longRidge = Math.sin(x * 0.034) * 2.4 + Math.cos(z * 0.041) * 1.8;
       const midNoise =
         Math.sin(x * 0.07) * 1.1 +
         Math.cos(z * 0.08) * 0.9 +
@@ -73,8 +79,11 @@ export function buildHeights(): { heights: number[][]; isTrack: boolean[][] } {
         Math.sin(x * 0.21) * 0.25 +
         Math.cos(z * 0.27) * 0.2 +
         Math.sin((x - z) * 0.33) * 0.15;
+      // Far peaks: extra rise on the deep north quarter.
+      const farPeaks = Math.max(0, (z - TERRAIN_SIZE * 0.25) / TERRAIN_SIZE) * 18
+                     * (0.6 + 0.4 * Math.sin(x * 0.025 + z * 0.01));
 
-      let h = ridge + longRidge + midNoise + fineNoise;
+      let h = ridge + bigFold + longRidge + midNoise + fineNoise + farPeaks;
       h += canyonWallHeight(x, z);
 
       const tx = trackX(zNorm);
@@ -122,6 +131,9 @@ export function buildTerrainMesh(heights: number[][], isTrack: boolean[][]): THR
   const scrubDry = new THREE.Color(0x837048);
   const dirt = new THREE.Color(0xa68a5b);
   const rut = new THREE.Color(0x6b5436);
+  // Snow palette for high-altitude peaks. White at the top, partial dusting in transition.
+  const snow = new THREE.Color(0xeae6e0);
+  const snowDirty = new THREE.Color(0xb6b0a4);
 
   const trackXAt = (z: number) => {
     const zNorm = z / TERRAIN_SIZE;
@@ -155,19 +167,32 @@ export function buildTerrainMesh(heights: number[][], isTrack: boolean[][]): THR
         c = dist < 1.4 ? rut : dirt;
       } else {
         const slope = slopeAt(i, jFlipped);
-        // Steep → limestone; the steeper, the more shadowed.
-        if (slope > 1.4) {
+        // Snow line: high altitude on gentle-to-medium slopes accumulates snow;
+        // very steep slopes stay rocky (snow doesn't stick to vertical walls).
+        const snowLine = 22;        // m above sea level where snow starts
+        const fullSnow = 32;        // fully covered above this altitude
+        if (h >= snowLine && slope < 1.8) {
+          const altT = Math.min(1, (h - snowLine) / (fullSnow - snowLine));
+          const slopeFade = Math.max(0, 1 - slope / 1.8); // less snow on steep
+          const blend = altT * slopeFade;
+          // Fully snowy at peak gentle slopes; partial dusting in transition.
+          if (blend > 0.6) c = snow.clone().lerp(snowDirty, 1 - blend);
+          else if (blend > 0.2) {
+            const partial = (blend - 0.2) / 0.4;
+            c = limestone.clone().lerp(snowDirty, partial);
+          } else {
+            // Below blend threshold — rocky.
+            c = limestone.clone().lerp(limestoneShadow, Math.min(1, slope / 2.4));
+          }
+        } else if (slope > 1.4) {
           const t = Math.min(1, (slope - 1.4) / 1.5);
           c = limestone.clone().lerp(limestoneShadow, t);
         } else if (slope > 0.7) {
-          // Transition: scrub-dry mixing with limestone.
           const t = (slope - 0.7) / 0.7;
           c = scrubDry.clone().lerp(limestone, t);
         } else if (h < -0.4) {
-          // Low pockets — sand.
           c = sand;
         } else {
-          // Mid: scrub olive with subtle variation.
           const variance = ((Math.sin(i * 0.7) + Math.cos(j * 0.9)) * 0.5 + 0.5) * 0.3;
           c = scrub.clone().lerp(scrubDry, variance);
         }

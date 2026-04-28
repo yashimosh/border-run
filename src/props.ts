@@ -105,76 +105,287 @@ export function syncProps(props: Prop[]) {
   }
 }
 
-// — Birds: simple flapping triangles that fly across the +z corridor.
+// — Birds: proper boids flock. Cohesion + alignment + separation + wander +
+// avoid-truck. ~16 birds, all visible on screen at once.
+interface Boid {
+  mesh: THREE.Group;
+  pos: THREE.Vector3;
+  vel: THREE.Vector3;
+  flapPhase: number;
+}
+
 export class BirdFlock {
-  private birds: { mesh: THREE.Group; vx: number; vz: number; flapPhase: number; life: number }[] = [];
-  private spawnTimer = 5 + Math.random() * 12;
+  private boids: Boid[] = [];
   private scene: THREE.Scene;
   private bounds: number;
+  private mat: THREE.MeshBasicMaterial;
 
-  constructor(scene: THREE.Scene, bounds: number) {
+  // Tunable boid params.
+  private maxSpeed = 9.5;
+  private minSpeed = 4.5;
+  private cohesionR = 12;
+  private separationR = 3.0;
+  private alignmentR = 8;
+  private cohesionW = 0.6;
+  private separationW = 1.6;
+  private alignmentW = 0.9;
+  private wanderW = 0.4;
+  private avoidTruckR = 14;
+  private avoidTruckW = 5.0;
+  private cruiseAltitude = 28;
+  private altitudeSpring = 0.5;
+
+  constructor(scene: THREE.Scene, bounds: number, count = 16) {
     this.scene = scene;
     this.bounds = bounds;
+    this.mat = new THREE.MeshBasicMaterial({ color: 0x1a1f24, fog: true });
+    for (let i = 0; i < count; i++) this.spawn();
   }
 
-  update(dt: number) {
-    this.spawnTimer -= dt;
-    if (this.spawnTimer <= 0 && this.birds.length < 4) {
-      this.spawnFlock();
-      this.spawnTimer = 14 + Math.random() * 22;
-    }
-    for (let i = this.birds.length - 1; i >= 0; i--) {
-      const b = this.birds[i];
-      b.mesh.position.x += b.vx * dt;
-      b.mesh.position.z += b.vz * dt;
-      b.flapPhase += dt * 9;
-      // Animate wings via the children's rotation.
-      const wingL = b.mesh.children[0];
-      const wingR = b.mesh.children[1];
-      const flap = Math.sin(b.flapPhase) * 0.5;
-      if (wingL) wingL.rotation.z = -0.3 + flap;
-      if (wingR) wingR.rotation.z = 0.3 - flap;
-      b.life -= dt;
-      if (b.life <= 0 || Math.abs(b.mesh.position.x) > this.bounds || Math.abs(b.mesh.position.z) > this.bounds) {
-        this.scene.remove(b.mesh);
-        this.birds.splice(i, 1);
+  private spawn() {
+    const mesh = this.makeBird();
+    const pos = new THREE.Vector3(
+      (Math.random() - 0.5) * this.bounds * 0.8,
+      this.cruiseAltitude + (Math.random() - 0.5) * 6,
+      (Math.random() - 0.5) * this.bounds * 0.8,
+    );
+    mesh.position.copy(pos);
+    const angle = Math.random() * Math.PI * 2;
+    const sp = (this.minSpeed + this.maxSpeed) * 0.5;
+    const vel = new THREE.Vector3(Math.cos(angle) * sp, 0, Math.sin(angle) * sp);
+    this.scene.add(mesh);
+    this.boids.push({ mesh, pos, vel, flapPhase: Math.random() * Math.PI * 2 });
+  }
+
+  update(dt: number, truckPos?: THREE.Vector3) {
+    const acc = new THREE.Vector3();
+    for (let i = 0; i < this.boids.length; i++) {
+      const a = this.boids[i];
+      acc.set(0, 0, 0);
+
+      // Cohesion + alignment + separation.
+      let cohCount = 0; const cohCenter = new THREE.Vector3();
+      let aliCount = 0; const aliVel = new THREE.Vector3();
+      let sepForce = new THREE.Vector3();
+
+      for (let j = 0; j < this.boids.length; j++) {
+        if (j === i) continue;
+        const b = this.boids[j];
+        const d = a.pos.distanceTo(b.pos);
+        if (d < this.cohesionR) { cohCenter.add(b.pos); cohCount++; }
+        if (d < this.alignmentR) { aliVel.add(b.vel); aliCount++; }
+        if (d < this.separationR && d > 0.001) {
+          const away = a.pos.clone().sub(b.pos).divideScalar(d * d);
+          sepForce.add(away);
+        }
       }
-    }
-  }
+      if (cohCount > 0) {
+        cohCenter.divideScalar(cohCount).sub(a.pos).multiplyScalar(this.cohesionW * 0.5);
+        acc.add(cohCenter);
+      }
+      if (aliCount > 0) {
+        aliVel.divideScalar(aliCount).sub(a.vel).multiplyScalar(this.alignmentW * 0.5);
+        acc.add(aliVel);
+      }
+      sepForce.multiplyScalar(this.separationW * 8);
+      acc.add(sepForce);
 
-  private spawnFlock() {
-    const count = 1 + Math.floor(Math.random() * 3);
-    const startX = (Math.random() < 0.5 ? -1 : 1) * this.bounds * 0.8;
-    const startZ = -100 + Math.random() * 200;
-    const dir = Math.sign(-startX); // fly across to the other side
-    const speed = 7 + Math.random() * 5;
-    const altitude = 28 + Math.random() * 12;
-    for (let i = 0; i < count; i++) {
-      const bird = this.makeBird();
-      bird.position.set(startX + i * 2, altitude + (Math.random() - 0.5) * 3, startZ + i * 1.5);
-      this.scene.add(bird);
-      this.birds.push({
-        mesh: bird,
-        vx: dir * speed,
-        vz: (Math.random() - 0.5) * 1.5,
-        flapPhase: Math.random() * Math.PI * 2,
-        life: 28 + Math.random() * 10,
-      });
+      // Wander: small random nudge.
+      acc.x += (Math.random() - 0.5) * this.wanderW;
+      acc.z += (Math.random() - 0.5) * this.wanderW;
+
+      // Altitude spring — stay near cruise height.
+      acc.y += (this.cruiseAltitude - a.pos.y) * this.altitudeSpring;
+
+      // Avoid the truck — flee if too close.
+      if (truckPos) {
+        const toTruck = a.pos.clone().sub(truckPos);
+        const dt2 = toTruck.length();
+        if (dt2 < this.avoidTruckR && dt2 > 0.001) {
+          const flee = toTruck.divideScalar(dt2 * dt2).multiplyScalar(this.avoidTruckW * this.avoidTruckR);
+          acc.add(flee);
+          acc.y += this.avoidTruckW * 0.6; // climb when fleeing
+        }
+      }
+
+      // Stay within bounds — gently turn back if drifting out.
+      const margin = this.bounds * 0.85;
+      if (a.pos.x > margin) acc.x -= 4;
+      else if (a.pos.x < -margin) acc.x += 4;
+      if (a.pos.z > margin) acc.z -= 4;
+      else if (a.pos.z < -margin) acc.z += 4;
+
+      // Integrate.
+      a.vel.addScaledVector(acc, dt);
+      // Clamp speed range.
+      const sp = a.vel.length();
+      if (sp > this.maxSpeed) a.vel.multiplyScalar(this.maxSpeed / sp);
+      else if (sp < this.minSpeed && sp > 0.001) a.vel.multiplyScalar(this.minSpeed / sp);
+      a.pos.addScaledVector(a.vel, dt);
+      a.mesh.position.copy(a.pos);
+
+      // Face direction of travel.
+      const yaw = Math.atan2(a.vel.x, a.vel.z);
+      a.mesh.rotation.y = yaw;
+      const pitch = Math.atan2(-a.vel.y, Math.hypot(a.vel.x, a.vel.z));
+      a.mesh.rotation.x = pitch * 0.4;
+
+      // Wing flap rate scales with speed.
+      a.flapPhase += dt * (8 + sp * 0.6);
+      const flap = Math.sin(a.flapPhase) * 0.55;
+      const wingL = a.mesh.children[0];
+      const wingR = a.mesh.children[1];
+      if (wingL) wingL.rotation.z = -0.25 + flap;
+      if (wingR) wingR.rotation.z = 0.25 - flap;
     }
   }
 
   private makeBird(): THREE.Group {
     const g = new THREE.Group();
-    const mat = new THREE.MeshBasicMaterial({ color: 0x202428, fog: true });
-    // Wings: two triangles meeting at a center.
     const wingGeoL = new THREE.BufferGeometry();
-    wingGeoL.setAttribute("position", new THREE.Float32BufferAttribute([0, 0, 0, -0.7, 0, -0.1, -0.5, 0, 0.2], 3));
+    wingGeoL.setAttribute("position", new THREE.Float32BufferAttribute([0, 0, 0, -0.85, 0, -0.18, -0.55, 0, 0.25], 3));
     const wingGeoR = new THREE.BufferGeometry();
-    wingGeoR.setAttribute("position", new THREE.Float32BufferAttribute([0, 0, 0, 0.7, 0, -0.1, 0.5, 0, 0.2], 3));
-    const wingL = new THREE.Mesh(wingGeoL, mat);
-    const wingR = new THREE.Mesh(wingGeoR, mat);
+    wingGeoR.setAttribute("position", new THREE.Float32BufferAttribute([0, 0, 0, 0.85, 0, -0.18, 0.55, 0, 0.25], 3));
+    const wingL = new THREE.Mesh(wingGeoL, this.mat);
+    const wingR = new THREE.Mesh(wingGeoR, this.mat);
     g.add(wingL); g.add(wingR);
+    // Tiny body so they have presence at distance.
+    const body = new THREE.Mesh(
+      new THREE.BoxGeometry(0.12, 0.08, 0.32),
+      this.mat,
+    );
+    g.add(body);
     return g;
+  }
+}
+
+// — Goat AI: pick a target, walk toward it, flee from truck. Prop bodies
+// already exist; this just adds gentle horizontal force per frame.
+export interface GoatBrain {
+  prop: Prop;
+  target: THREE.Vector3;
+  retargetTimer: number;
+  fleeing: boolean;
+}
+
+export function createGoatBrain(prop: Prop): GoatBrain {
+  const target = new THREE.Vector3(prop.body.position.x, 0, prop.body.position.z);
+  return { prop, target, retargetTimer: 1 + Math.random() * 3, fleeing: false };
+}
+
+export function updateGoatBrains(
+  brains: GoatBrain[],
+  truckPos: THREE.Vector3,
+  dt: number,
+  sampleH: (x: number, z: number) => number,
+) {
+  for (const brain of brains) {
+    const body = brain.prop.body;
+    if (brain.prop.kind !== "goat") continue;
+
+    // Distance to truck.
+    const dxT = body.position.x - truckPos.x;
+    const dzT = body.position.z - truckPos.z;
+    const distT = Math.hypot(dxT, dzT);
+    brain.fleeing = distT < 9;
+
+    if (brain.fleeing) {
+      // Flee directly away from truck.
+      const inv = 1 / Math.max(0.5, distT);
+      body.applyForce(
+        new CANNON.Vec3(dxT * inv * 90, 0, dzT * inv * 90),
+        body.position,
+      );
+      brain.retargetTimer = 0.5; // panic — retarget soon
+    } else {
+      brain.retargetTimer -= dt;
+      if (brain.retargetTimer <= 0) {
+        // Pick a new target within ~12m radius.
+        const angle = Math.random() * Math.PI * 2;
+        const dist = 4 + Math.random() * 8;
+        brain.target.set(
+          body.position.x + Math.cos(angle) * dist,
+          0,
+          body.position.z + Math.sin(angle) * dist,
+        );
+        brain.target.y = sampleH(brain.target.x, brain.target.z);
+        brain.retargetTimer = 4 + Math.random() * 6;
+      }
+      // Gentle nudge toward target.
+      const dx = brain.target.x - body.position.x;
+      const dz = brain.target.z - body.position.z;
+      const d = Math.hypot(dx, dz);
+      if (d > 0.5) {
+        const inv = 1 / d;
+        body.applyForce(
+          new CANNON.Vec3(dx * inv * 14, 0, dz * inv * 14),
+          body.position,
+        );
+      }
+    }
+  }
+}
+
+// — Atmospheric dust: sparse low-alpha haze particles drifting slowly across
+// the world. Creates "dawn corridor" feel without a heavy weather system.
+export class DustHaze {
+  mesh: THREE.InstancedMesh;
+  private particles: { x: number; y: number; z: number; vx: number; vy: number; vz: number; size: number; rot: number }[] = [];
+  private dummy = new THREE.Object3D();
+  private bounds: number;
+
+  constructor(scene: THREE.Scene, bounds: number, count = 90) {
+    this.bounds = bounds;
+    const geo = new THREE.PlaneGeometry(2.0, 2.0);
+    const mat = new THREE.MeshBasicMaterial({
+      color: 0xc8b89a,
+      transparent: true,
+      opacity: 0.06,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+      fog: true,
+    });
+    this.mesh = new THREE.InstancedMesh(geo, mat, count);
+    this.mesh.frustumCulled = false;
+    for (let i = 0; i < count; i++) {
+      this.particles.push({
+        x: (Math.random() - 0.5) * bounds,
+        y: 1 + Math.random() * 14,
+        z: (Math.random() - 0.5) * bounds,
+        vx: (Math.random() - 0.5) * 0.6,
+        vy: (Math.random() - 0.3) * 0.15,
+        vz: (Math.random() - 0.5) * 0.6,
+        size: 1.5 + Math.random() * 3.5,
+        rot: Math.random() * Math.PI * 2,
+      });
+    }
+    scene.add(this.mesh);
+  }
+
+  update(dt: number, camera: THREE.Camera) {
+    const half = this.bounds / 2;
+    for (let i = 0; i < this.particles.length; i++) {
+      const p = this.particles[i];
+      p.x += p.vx * dt;
+      p.y += p.vy * dt;
+      p.z += p.vz * dt;
+      p.rot += dt * 0.05;
+      // Wrap around the world.
+      if (p.x > half) p.x = -half;
+      else if (p.x < -half) p.x = half;
+      if (p.z > half) p.z = -half;
+      else if (p.z < -half) p.z = half;
+      if (p.y > 18) p.y = 1;
+      else if (p.y < 0.5) p.y = 14;
+
+      this.dummy.position.set(p.x, p.y, p.z);
+      this.dummy.lookAt(camera.position);
+      this.dummy.rotation.z = p.rot;
+      this.dummy.scale.setScalar(p.size);
+      this.dummy.updateMatrix();
+      this.mesh.setMatrixAt(i, this.dummy.matrix);
+    }
+    this.mesh.instanceMatrix.needsUpdate = true;
   }
 }
 
