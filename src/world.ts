@@ -48,28 +48,21 @@ export function buildHeights(): { heights: number[][]; isTrack: boolean[][] } {
     return climb + pulse;
   };
 
-  // — Ridged-multifractal-style noise: high values get more detail.
-  // Approximates real mountain terrain where ridges have sharp features
-  // and valleys are smoother (sediment-filled). All using sin/cos for
-  // determinism + speed; not Perlin but reads similar at this scale.
+  // — Smooth multi-octave noise. Adjacent samples are similar (sin/cos is
+  // continuous) so slopes stay low and most terrain reads as gentle hill,
+  // not jagged ridge. Ridged-multifractal looked good in screenshots but
+  // produced slope > 1.6 across most of the map.
   const ridgedDetail = (x: number, z: number): number => {
     let total = 0;
     let amp = 1.0;
-    let freq = 0.012;
-    let weight = 1.0;
-    for (let o = 0; o < 5; o++) {
-      // Pseudo-noise sample in -1..+1.
-      const s = Math.sin(x * freq * 1.13 + 0.7) * Math.cos(z * freq * 0.97 + 1.3);
-      // Ridge: 1 - |s| — high on ridge crests, low in valleys.
-      let n = 1 - Math.abs(s);
-      n = n * n; // sharpen
-      n *= weight;
-      weight = Math.max(0, Math.min(1, n * 2.2));
-      total += n * amp;
-      amp *= 0.55;
+    let freq = 0.018;
+    for (let o = 0; o < 4; o++) {
+      total += Math.sin(x * freq * 1.13 + 0.7) * Math.cos(z * freq * 0.97 + 1.3) * amp;
+      amp *= 0.5;
       freq *= 2.07;
     }
-    return total; // ~0..2.2
+    // Range: roughly -2 .. +2. Map to 0..1 for additive use elsewhere.
+    return (total + 2) * 0.25; // 0..1
   };
 
   // — Smooth Perlin-ish low-frequency for valley shapes.
@@ -114,7 +107,10 @@ export function buildHeights(): { heights: number[][]; isTrack: boolean[][] } {
       const folds = lowFreqShape(x, z);
 
       let h = baseElevation + ridges + folds;
-      h += canyonWallHeight(x, z);
+      // Canyon walls disabled — they created sharp cliffs that pushed shading
+      // into rocky-grey across too much area. The natural valley carve below
+      // gives the road its enclosed feel without hard walls.
+      // h += canyonWallHeight(x, z);
 
       // Subtle valley carve — enough to make the road read as "in a valley"
       // without pushing terrain below sea level (the meadow threshold).
@@ -210,22 +206,22 @@ export function buildTerrainMesh(heights: number[][], isTrack: boolean[][]): THR
         c = dirtRoad;
       } else {
         const slope = slopeAt(i, jFlipped);
-        // Kurdistan forest-steppe palette. Slope thresholds tuned higher so
-        // the typical hillside reads green oak, not bare limestone.
-        if (h >= 28 && slope < 2.2) {
-          c = snow;              // alpine snow cap
-        } else if (h >= 22 && slope < 1.8) {
-          c = snowDirty;         // patchy snow line
-        } else if (slope > 2.4) {
-          c = limestoneShadow;   // steep cliff face only
-        } else if (slope > 1.6) {
-          c = limestone;         // medium-steep slope
+        // Slope thresholds aggressive — green dominates, only true cliffs
+        // become rock. Snow only at real altitude.
+        if (h >= 32) {
+          c = snow;              // peaks
+        } else if (h >= 26) {
+          c = snowDirty;         // snow line
+        } else if (slope > 3.5) {
+          c = limestoneShadow;   // genuinely steep cliff
+        } else if (slope > 2.6) {
+          c = limestone;
         } else if (h < -0.4) {
-          c = meadowDry;         // very low pockets only
-        } else if (h > 18) {
-          c = oakHigh;           // higher oak / scrub mix
+          c = meadowDry;
+        } else if (h > 20) {
+          c = oakHigh;
         } else {
-          c = oakForest;         // dominant green — most cells
+          c = oakForest;         // baseline — should be MOST cells
         }
       }
       colors[idx * 3] = c.r;
