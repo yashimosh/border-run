@@ -623,7 +623,9 @@ export function buildAsphaltRoad(heights: number[][]): THREE.Group {
   for (let i = 0; i < dashCount; i++) {
     const z = zStart + i * dashSpacing + dashSpacing / 2;
     const cx = trackXAt(z);
-    const cy = sampleHeight(cx, z, heights) + 0.42;
+    // Dashes need to sit above the lifted asphalt surface (which is now ~0.5m
+    // above terrain due to max-sample lift). Add an extra clearance.
+    const cy = sampleHeight(cx, z, heights) + 0.55;
     const dash = new THREE.Mesh(dashGeo, dashMat);
     dash.position.set(cx, cy, z);
     // Orient along tangent.
