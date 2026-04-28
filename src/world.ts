@@ -533,21 +533,11 @@ export function buildAsphaltRoad(heights: number[][]): THREE.Group {
     // Sample height under each edge so the road conforms to terrain.
     const lx = cx + nx * halfWidth, lz = z + nz * halfWidth;
     const rx = cx - nx * halfWidth, rz = z - nz * halfWidth;
-    // Sample multiple points across the road section + take MAX so the road
-    // surface clears every terrain curvature bump in its path. Without this,
-    // the flat-quad road dips below the curved terrain mesh on slopes.
-    const sampleMaxAlongCross = (px: number, pz: number, nx: number, nz: number, hw: number, samples = 4) => {
-      let m = sampleHeight(px, pz, heights);
-      for (let s = 1; s <= samples; s++) {
-        const t = (s / samples);
-        m = Math.max(m, sampleHeight(px + nx * hw * t, pz + nz * hw * t, heights));
-        m = Math.max(m, sampleHeight(px - nx * hw * t, pz - nz * hw * t, heights));
-      }
-      return m;
-    };
-    const lift = 0.35;
-    const ly = sampleMaxAlongCross(lx, lz, nx, nz, halfWidth) + lift;
-    const ry = sampleMaxAlongCross(rx, rz, nx, nz, halfWidth) + lift;
+    // Sample at the actual edge points + small lift. Polygon-offset on the
+    // material handles z-fighting against terrain so we don't need to float
+    // the road geometrically.
+    const ly = sampleHeight(lx, lz, heights) + 0.05;
+    const ry = sampleHeight(rx, rz, heights) + 0.05;
     positions.push(lx, ly, lz);
     positions.push(rx, ry, rz);
     uvs.push(0, t * 30);
@@ -565,10 +555,13 @@ export function buildAsphaltRoad(heights: number[][]): THREE.Group {
   geo.computeVertexNormals();
 
   const surfaceMat = new THREE.MeshStandardMaterial({
-    color: 0x1a1a1c,                  // darker asphalt for higher contrast against forest
+    color: 0x1a1a1c,
     roughness: 0.85,
     metalness: 0.05,
     side: THREE.DoubleSide,
+    polygonOffset: true,         // depth bias — road wins z-fight vs terrain
+    polygonOffsetFactor: -2,
+    polygonOffsetUnits: -4,
   });
   const road = new THREE.Mesh(geo, surfaceMat);
   road.receiveShadow = true;
@@ -576,7 +569,10 @@ export function buildAsphaltRoad(heights: number[][]): THREE.Group {
 
   // Shoulder strips (lighter beige) on each side — read as graded earth verge.
   const shoulderHalf = 0.4;
-  const shoulderMat = new THREE.MeshStandardMaterial({ color: 0x8a7556, roughness: 1.0, side: THREE.DoubleSide });
+  const shoulderMat = new THREE.MeshStandardMaterial({
+    color: 0x8a7556, roughness: 1.0, side: THREE.DoubleSide,
+    polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -3,
+  });
   for (const side of [-1, 1]) {
     const sPos: number[] = [];
     const sIdx: number[] = [];
@@ -593,8 +589,8 @@ export function buildAsphaltRoad(heights: number[][]): THREE.Group {
       const innerZ = z + side * nz * halfWidth;
       const outerX = cx + side * nx * (halfWidth + shoulderHalf * 2);
       const outerZ = z + side * nz * (halfWidth + shoulderHalf * 2);
-      const innerY = sampleHeight(innerX, innerZ, heights) + 0.32;
-      const outerY = sampleHeight(outerX, outerZ, heights) + 0.20;
+      const innerY = sampleHeight(innerX, innerZ, heights) + 0.04;
+      const outerY = sampleHeight(outerX, outerZ, heights) + 0.02;
       sPos.push(innerX, innerY, innerZ);
       sPos.push(outerX, outerY, outerZ);
     }
@@ -613,19 +609,19 @@ export function buildAsphaltRoad(heights: number[][]): THREE.Group {
   }
 
   // Center-line dashes — short white segments sampled along the curve.
-  // Wider + longer dashes for visibility against asphalt.
-  const dashMat = new THREE.MeshBasicMaterial({ color: 0xfffbe8, fog: true });
+  const dashMat = new THREE.MeshBasicMaterial({
+    color: 0xfffbe8, fog: true,
+    polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -6,
+  });
   const dashGeo = new THREE.PlaneGeometry(0.32, 2.4);
   dashGeo.rotateX(-Math.PI / 2);
-  const dashSpacing = 5.5; // m between dash centers
+  const dashSpacing = 5.5;
   const totalLength = zEnd - zStart;
   const dashCount = Math.floor(totalLength / dashSpacing);
   for (let i = 0; i < dashCount; i++) {
     const z = zStart + i * dashSpacing + dashSpacing / 2;
     const cx = trackXAt(z);
-    // Dashes need to sit above the lifted asphalt surface (which is now ~0.5m
-    // above terrain due to max-sample lift). Add an extra clearance.
-    const cy = sampleHeight(cx, z, heights) + 0.55;
+    const cy = sampleHeight(cx, z, heights) + 0.07;
     const dash = new THREE.Mesh(dashGeo, dashMat);
     dash.position.set(cx, cy, z);
     // Orient along tangent.

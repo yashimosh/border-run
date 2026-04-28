@@ -30,18 +30,17 @@ export function createPostFx(renderer: THREE.WebGLRenderer, scene: THREE.Scene, 
   const normalPass = new NormalPass(scene, camera);
   composer.addPass(normalPass);
 
-  // SSAO — subtle ambient occlusion. Adds shadow contrast in crevices
-  // without making the whole scene dark. Boosts the diorama feel.
+  // SSAO — subtle ambient occlusion. Sample count halved for perf (16→8).
   const ssao = new SSAOEffect(camera, normalPass.texture, {
-    samples: 16,
-    rings: 4,
-    distanceThreshold: 0.4,
-    distanceFalloff: 0.06,
+    samples: 8,
+    rings: 3,
+    distanceThreshold: 0.5,
+    distanceFalloff: 0.08,
     rangeThreshold: 0.0015,
     rangeFalloff: 0.001,
-    luminanceInfluence: 0.5,
-    radius: 12,
-    intensity: 1.4,
+    luminanceInfluence: 0.4,
+    radius: 10,
+    intensity: 0.9,
     bias: 0.04,
   });
 
@@ -58,12 +57,12 @@ export function createPostFx(renderer: THREE.WebGLRenderer, scene: THREE.Scene, 
     offset: 0.32,
   });
 
-  // Depth-of-field — subtle, mid-distance focus. Drives the "diorama" feel:
-  // the truck and immediate surroundings are sharp, distant ridges soften.
+  // Depth-of-field — much lighter than before. Bokeh scale lowered for perf
+  // and to stop drowning the road in blur.
   const dof = new DepthOfFieldEffect(camera, {
-    focusDistance: 0.012,    // normalized — ~mid-distance focus point
-    focalLength: 0.06,
-    bokehScale: 2.2,
+    focusDistance: 0.018,
+    focalLength: 0.10,
+    bokehScale: 1.2,
   });
 
   // Color grading — slight cool shift in shadows, warm in highlights;

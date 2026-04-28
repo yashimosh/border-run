@@ -167,13 +167,13 @@ function init(kind: VehicleKind) {
   const sun = new THREE.DirectionalLight(0xffd9a8, 1.6);
   sun.position.copy(sunPosition).multiplyScalar(150);
   sun.castShadow = true;
-  sun.shadow.mapSize.set(4096, 4096);  // sharper shadows for the diorama feel
+  sun.shadow.mapSize.set(2048, 2048);  // perf: 4096² was eating frametime
   sun.shadow.camera.left = -180; sun.shadow.camera.right = 180;
   sun.shadow.camera.top = 180; sun.shadow.camera.bottom = -180;
   sun.shadow.camera.near = 1; sun.shadow.camera.far = 400;
-  sun.shadow.bias = -0.00015;
+  sun.shadow.bias = -0.0003;
   sun.shadow.normalBias = 0.02;
-  sun.shadow.radius = 4;  // softer edge falloff
+  sun.shadow.radius = 3;
   scene.add(sun);
 
   // Physics world.
@@ -208,9 +208,10 @@ function init(kind: VehicleKind) {
   hut.rotation.y = 0.6;
   scene.add(hut);
 
-  // Scatter detail — significantly increased density for Kurdistan forest-steppe feel.
-  scene.add(buildRocks(heights, isTrack, 220));
-  scene.add(buildScrub(heights, isTrack, 600));
+  // Scatter detail. Rocks + scrub are instanced (cheap). Trees below are NOT
+  // instanced (each is a Group of meshes), so we keep their counts modest.
+  scene.add(buildRocks(heights, isTrack, 180));
+  scene.add(buildScrub(heights, isTrack, 450));
   scene.add(buildDistantRidges());
 
   // Track helper for landmark placement.
@@ -240,10 +241,10 @@ function init(kind: VehicleKind) {
     scene.add(slab);
   }
 
-  // Persian oak forest — Kurdistan's signature. Quercus brantii covers >50%
-  // of Zagros slopes; the slice should *look* forested. 1200 attempts,
-  // ~600+ accept, very dense scatter.
-  for (let i = 0; i < 1200; i++) {
+  // Persian oak forest — Kurdistan's signature. Each oak is ~5 meshes (trunk +
+  // 3-4 foliage blobs); 600 oaks = 3000 draw calls = real perf cost. Reduced
+  // attempts to 600 (~300 placed) — still reads as forest, half the cost.
+  for (let i = 0; i < 600; i++) {
     const ox = (Math.random() - 0.5) * (TERRAIN_SIZE - 30);
     const oz = (Math.random() - 0.5) * (TERRAIN_SIZE - 30);
     if (Math.abs(ox - trackXLocal(oz)) < 7) continue;
@@ -264,7 +265,7 @@ function init(kind: VehicleKind) {
   }
 
   // Junipers — dense on the high slopes (z > 50, altitude 4-26m).
-  for (let i = 0; i < 350; i++) {
+  for (let i = 0; i < 180; i++) {
     const jx = (Math.random() - 0.5) * (TERRAIN_SIZE - 30);
     const jz = 50 + Math.random() * (TERRAIN_SIZE / 2 - 60);
     if (Math.abs(jx - trackXLocal(jz)) < 7) continue;
@@ -278,7 +279,7 @@ function init(kind: VehicleKind) {
   }
 
   // Wild bushes — much denser to fill the forest understory.
-  for (let i = 0; i < 600; i++) {
+  for (let i = 0; i < 280; i++) {
     const bx = (Math.random() - 0.5) * (TERRAIN_SIZE - 20);
     const bz = (Math.random() - 0.5) * (TERRAIN_SIZE - 20);
     if (Math.abs(bx - trackXLocal(bz)) < 5) continue;
