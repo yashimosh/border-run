@@ -31,12 +31,14 @@ import { setupFeedback } from "./feedback";
 import { recordSession, fetchStats, formatStats } from "./analytics";
 import { createDevtools } from "./devtools";
 import { createPostFx } from "./postfx";
+import { isMobile, setupTouchControls } from "./touch";
 import gsap from "gsap";
 import { Howl } from "howler";
 
 type Keys = {
   fwd: boolean; back: boolean; left: boolean; right: boolean;
   brake: boolean; handbrake: boolean; boost: boolean;
+  steerAnalog: number; // -1..1, set by touch controls; 0 when using keyboard
 };
 
 // Howler-loaded door-close SFX. Generated as a base64 WAV at build time so
@@ -76,6 +78,9 @@ function boot() {
   });
 }
 
+// Mark touch devices immediately so CSS shows touch controls from the start.
+if (isMobile()) document.body.classList.add("touch-device");
+
 if (document.readyState === "loading") {
   document.addEventListener("DOMContentLoaded", () => { hideLoader(); setupFeedback(); fillStatsLine(); boot(); });
 } else {
@@ -104,6 +109,7 @@ function init(kind: VehicleKind) {
   // unique-player counts work without a login.
   recordSession();
 
+  const mobile = isMobile();
   const stage = document.getElementById("stage")!;
   const renderer = new THREE.WebGLRenderer({
     antialias: false, // disabled — we use postprocessing-based smoothing
@@ -111,7 +117,8 @@ function init(kind: VehicleKind) {
     stencil: false,
     depth: true,
   });
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.75));
+  // Lower pixel ratio on mobile — mobile screens are dense but GPU budget is small.
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, mobile ? 1.5 : 1.75));
   renderer.setSize(window.innerWidth, window.innerHeight);
   renderer.setClearColor(0x0b0b0c);
   renderer.shadowMap.enabled = true;
@@ -158,7 +165,8 @@ function init(kind: VehicleKind) {
   const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 800);
 
   // Postprocessing — bloom, vignette, tone mapping. Replaces renderer.render.
-  const postfx = createPostFx(renderer, scene, camera);
+  // Mobile skips SSAO + DOF for ~2× GPU savings.
+  const postfx = createPostFx(renderer, scene, camera, { mobile });
 
   // Lighting — cold dawn.
   const hemi = new THREE.HemisphereLight(0x88928a, 0x2a2a20, 0.32);
@@ -167,7 +175,7 @@ function init(kind: VehicleKind) {
   const sun = new THREE.DirectionalLight(0xffd9a8, 1.6);
   sun.position.copy(sunPosition).multiplyScalar(150);
   sun.castShadow = true;
-  sun.shadow.mapSize.set(2048, 2048);  // perf: 4096² was eating frametime
+  sun.shadow.mapSize.set(mobile ? 1024 : 2048, mobile ? 1024 : 2048);
   sun.shadow.camera.left = -180; sun.shadow.camera.right = 180;
   sun.shadow.camera.top = 180; sun.shadow.camera.bottom = -180;
   sun.shadow.camera.near = 1; sun.shadow.camera.far = 400;
@@ -482,7 +490,7 @@ function init(kind: VehicleKind) {
   world.addContactMaterial(wheelGroundContact);
 
   // Input.
-  const keys: Keys = { fwd: false, back: false, left: false, right: false, brake: false, handbrake: false, boost: false };
+  const keys: Keys = { fwd: false, back: false, left: false, right: false, brake: false, handbrake: false, boost: false, steerAnalog: 0 };
   const isTextInput = (el: Element | null) =>
     el instanceof HTMLInputElement ||
     el instanceof HTMLTextAreaElement ||
@@ -600,6 +608,12 @@ function init(kind: VehicleKind) {
     resetCargo(cargo, vehicle);
   }
 
+  // Touch controls — only active on mobile; no-op on desktop.
+  setupTouchControls(keys, {
+    reset: resetVehicle,
+    radioToggle: () => radio.toggle(),
+  });
+
   // Camera follow state. Slightly higher + further so crests don't blind you.
   const camOffsetLocal = new THREE.Vector3(0, 5.6, -10);
   let camShakeT = 0; // shake decay timer
@@ -689,9 +703,13 @@ function init(kind: VehicleKind) {
     const zone = classifyZone(v.chassisBody.position.x, v.chassisBody.position.z, heights, isTrack);
     const trac = ZONE_TRACTION[zone];
 
+    // steerAnalog is set by touch controls (-1..1); keyboard falls back to boolean.
     const targetSteer = (
-      keys.left ? v.spec.maxSteer :
-      keys.right ? -v.spec.maxSteer : 0
+      keys.steerAnalog !== 0
+        ? -keys.steerAnalog * v.spec.maxSteer
+        : keys.left ? v.spec.maxSteer
+        : keys.right ? -v.spec.maxSteer
+        : 0
     ) * trac.steer;
     steering += (targetSteer - steering) * Math.min(1, dt * 6);
 
