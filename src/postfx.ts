@@ -66,10 +66,10 @@ export function createPostFx(
 ): PostFx {
   const mobile  = opts.mobile ?? false;
   const quality = opts.quality ?? "medium";
-  const renderScale = Math.max(0.25, Math.min(1.0, opts.renderScale ?? 1.0));
 
+  // setSize takes already-scaled CSS pixel dimensions (caller manages render scale).
   const makeSetSize = (c: EffectComposer) =>
-    (w: number, h: number) => c.setSize(Math.floor(w * renderScale), Math.floor(h * renderScale));
+    (w: number, h: number) => c.setSize(Math.floor(w), Math.floor(h));
 
   const composer = new EffectComposer(renderer, {
     frameBufferType: THREE.HalfFloatType,
@@ -78,43 +78,20 @@ export function createPostFx(
 
   const smaa = new SMAAEffect();
 
-  // ── Desktop: high quality — SSAO + NormalPass + DOF + color grade ─────────
-  // NormalPass re-draws the entire scene a second time to get geometry normals
-  // for SSAO. Expensive. Only enable on machines that can afford it.
+  // ── High quality: SSAO + NormalPass + DOF + color grade ───────────────────
+  // NormalPass re-draws the entire scene a second time. Desktop-only: mobile
+  // GPUs have too little bandwidth for the extra geometry pass.
   if (!mobile && quality === "high") {
     const normalPass = new NormalPass(scene, camera);
     composer.addPass(normalPass);
 
     const ssao = new SSAOEffect(camera, normalPass.texture, {
-      samples: 8,
-      rings: 3,
-      distanceThreshold: 0.5,
-      distanceFalloff: 0.08,
-      rangeThreshold: 0.0015,
-      rangeFalloff: 0.001,
-      luminanceInfluence: 0.4,
-      radius: 10,
-      intensity: 0.9,
-      bias: 0.04,
+      samples: 8, rings: 3,
+      distanceThreshold: 0.5, distanceFalloff: 0.08,
+      rangeThreshold: 0.0015, rangeFalloff: 0.001,
+      luminanceInfluence: 0.4, radius: 10, intensity: 0.9, bias: 0.04,
     });
 
-    const bloom   = new BloomEffect({ intensity: 0.45, luminanceThreshold: 0.78, luminanceSmoothing: 0.22, kernelSize: KernelSize.MEDIUM, mipmapBlur: true });
-    const vignette = new VignetteEffect({ darkness: 0.7, offset: 0.32 });
-    const dof     = new DepthOfFieldEffect(camera, { focusDistance: 0.02, focalLength: 0.20, bokehScale: 0.6 });
-    const hueSat  = new HueSaturationEffect({ saturation: 0.12 });
-    const briCon  = new BrightnessContrastEffect({ brightness: 0.0, contrast: 0.08 });
-    const toneMap = new ToneMappingEffect({ mode: ToneMappingMode.AGX });
-
-    composer.addPass(new EffectPass(camera, ssao, dof, hueSat, briCon, bloom, vignette, toneMap));
-    composer.addPass(new EffectPass(camera, smaa));
-
-    return { composer, bloom, vignette, dof, smaa, setSize: makeSetSize(composer), render: (dt) => composer.render(dt) };
-  }
-
-  // ── Desktop: medium quality — DOF + color grade + bloom, no SSAO ──────────
-  // Single scene render. Drops the NormalPass entirely. Good default for most
-  // desktop GPUs and any browser with shields/throttling (e.g. Brave).
-  if (!mobile && quality === "medium") {
     const bloom    = new BloomEffect({ intensity: 0.45, luminanceThreshold: 0.78, luminanceSmoothing: 0.22, kernelSize: KernelSize.MEDIUM, mipmapBlur: true });
     const vignette = new VignetteEffect({ darkness: 0.7, offset: 0.32 });
     const dof      = new DepthOfFieldEffect(camera, { focusDistance: 0.02, focalLength: 0.20, bokehScale: 0.6 });
@@ -122,15 +99,30 @@ export function createPostFx(
     const briCon   = new BrightnessContrastEffect({ brightness: 0.0, contrast: 0.08 });
     const toneMap  = new ToneMappingEffect({ mode: ToneMappingMode.AGX });
 
-    composer.addPass(new EffectPass(camera, dof, hueSat, briCon, bloom, vignette, toneMap));
+    composer.addPass(new EffectPass(camera, ssao, dof, hueSat, briCon, bloom, vignette, toneMap));
     composer.addPass(new EffectPass(camera, smaa));
-
     return { composer, bloom, vignette, dof, smaa, setSize: makeSetSize(composer), render: (dt) => composer.render(dt) };
   }
 
-  // ── Mobile / low quality: bloom + vignette + tone + SMAA ─────────────────
-  // Skips SSAO, NormalPass, DOF, HueSat, BriCon.
-  // Also used for desktop "low" tier (weak GPU, Brave with heavy shields, etc.).
+  // ── Medium quality: DOF + color grade + bloom, no SSAO ────────────────────
+  // Single scene render. Works for high-end mobile and mid-range desktop.
+  // DOF bokeh is halved on mobile to save bandwidth; color grade is cheap either way.
+  if (quality === "medium") {
+    const bloom    = new BloomEffect({ intensity: 0.42, luminanceThreshold: 0.78, luminanceSmoothing: 0.22, kernelSize: KernelSize.MEDIUM, mipmapBlur: true });
+    const vignette = new VignetteEffect({ darkness: 0.7, offset: 0.32 });
+    const dof      = new DepthOfFieldEffect(camera, { focusDistance: 0.02, focalLength: 0.20, bokehScale: mobile ? 0.3 : 0.6 });
+    const hueSat   = new HueSaturationEffect({ saturation: 0.12 });
+    const briCon   = new BrightnessContrastEffect({ brightness: 0.0, contrast: 0.08 });
+    const toneMap  = new ToneMappingEffect({ mode: ToneMappingMode.AGX });
+
+    composer.addPass(new EffectPass(camera, dof, hueSat, briCon, bloom, vignette, toneMap));
+    composer.addPass(new EffectPass(camera, smaa));
+    return { composer, bloom, vignette, dof, smaa, setSize: makeSetSize(composer), render: (dt) => composer.render(dt) };
+  }
+
+  // ── Low quality: bloom + vignette + tone + SMAA ───────────────────────────
+  // Minimum viable path. Used for: Brave (shields throttle WebGL ops),
+  // budget mobile, weak desktop GPUs, adaptive fallback.
   const bloom    = new BloomEffect({ intensity: 0.35, luminanceThreshold: 0.82, luminanceSmoothing: 0.18, kernelSize: KernelSize.SMALL, mipmapBlur: true });
   const vignette = new VignetteEffect({ darkness: 0.7, offset: 0.32 });
   const dof      = new DepthOfFieldEffect(camera, { focusDistance: 0.02, focalLength: 0.20, bokehScale: 0.0 }); // stub
@@ -138,6 +130,5 @@ export function createPostFx(
 
   composer.addPass(new EffectPass(camera, bloom, vignette, toneMap));
   composer.addPass(new EffectPass(camera, smaa));
-
   return { composer, bloom, vignette, dof, smaa, setSize: makeSetSize(composer), render: (dt) => composer.render(dt) };
 }

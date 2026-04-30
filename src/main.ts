@@ -30,8 +30,33 @@ import { spawnCargo, updateCargo, resetCargo, CargoItem } from "./cargo";
 import { setupFeedback } from "./feedback";
 import { recordSession, fetchStats, formatStats } from "./analytics";
 import { createDevtools } from "./devtools";
-import { createPostFx } from "./postfx";
+import { createPostFx, QualityTier } from "./postfx";
 import { isMobile, setupTouchControls } from "./touch";
+
+// ── GPU quality + render-scale detection ─────────────────────────────────────
+// Runs once at module load so `init()` inherits the result.
+
+/** true when running in Brave. Brave exposes navigator.brave. */
+const isBrave = "brave" in navigator;
+
+/**
+ * Pick a quality tier and initial render scale based on detected hardware.
+ * Rules (in priority order):
+ *  1. Brave → low + 0.75  (Brave's fingerprinting shields throttle WebGL)
+ *  2. Mobile, high-end (≥6 GB RAM or ≥8 CPU threads) → medium + 0.85
+ *  3. Mobile, standard → low + 0.75
+ *  4. Desktop → medium + 1.0  ("high" is opt-in only)
+ */
+function detectGpuProfile(): { quality: QualityTier; renderScale: number } {
+  if (isBrave)   return { quality: "low",    renderScale: 0.75 };
+  if (isMobile()) {
+    const mem   = (navigator as any).deviceMemory   as number | undefined ?? 4;
+    const cores = navigator.hardwareConcurrency ?? 4;
+    if (mem >= 6 || cores >= 8) return { quality: "medium", renderScale: 0.85 };
+    return { quality: "low", renderScale: 0.75 };
+  }
+  return { quality: "medium", renderScale: 1.0 };
+}
 import gsap from "gsap";
 import { Howl } from "howler";
 
@@ -164,17 +189,25 @@ function init(kind: VehicleKind) {
 
   const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 800);
 
-  // Postprocessing — bloom, SMAA, vignette, tone mapping. Replaces renderer.render.
-  // Desktop default is "medium" (no SSAO/NormalPass). "high" adds SSAO but requires
-  // a second full scene render — only worth it on a dedicated GPU.
-  // Mobile at 0.75 render scale = ~44% pixel reduction; desktop stays at 1.0.
+  // Postprocessing setup. Quality tier + render scale come from detectGpuProfile().
+  // Render scale is managed externally here (not baked into postfx) so the
+  // adaptive monitor below can reduce it without rebuilding the composer.
+  const gpuProfile = detectGpuProfile();
+  let renderScale  = gpuProfile.renderScale;
+
   const postfx = createPostFx(renderer, scene, camera, {
     mobile,
-    quality: "medium",
-    renderScale: mobile ? 0.75 : 1.0,
+    quality: gpuProfile.quality,
   });
-  // Apply initial size (renderer is already set above; this sizes the composer).
-  postfx.setSize(window.innerWidth, window.innerHeight);
+
+  /** Resize both renderer (canvas) and composer (internal buffers at render scale). */
+  function applySize(w = window.innerWidth, h = window.innerHeight) {
+    renderer.setSize(w, h);
+    postfx.setSize(w * renderScale, h * renderScale);
+    camera.aspect = w / h;
+    camera.updateProjectionMatrix();
+  }
+  applySize();
 
   // Lighting — cold dawn.
   const hemi = new THREE.HemisphereLight(0x88928a, 0x2a2a20, 0.32);
@@ -650,13 +683,8 @@ function init(kind: VehicleKind) {
     eventTimeout = window.setTimeout(() => eventEl.classList.remove("show"), 2400);
   }
 
-  // Resize.
-  window.addEventListener("resize", () => {
-    renderer.setSize(window.innerWidth, window.innerHeight);
-    postfx.setSize(window.innerWidth, window.innerHeight);
-    camera.aspect = window.innerWidth / window.innerHeight;
-    camera.updateProjectionMatrix();
-  });
+  // Resize — applySize handles canvas, composer, and camera aspect together.
+  window.addEventListener("resize", () => applySize());
 
   // GSAP intro: FOV 90 → 60 over the first 1.4s for a "settling in" feel.
   camera.fov = 90;
@@ -758,8 +786,41 @@ function init(kind: VehicleKind) {
     }
   }
 
+  // ── Adaptive render-scale monitor ─────────────────────────────────────────
+  // Measures real frame time over the first PERF_WINDOW frames.
+  // If average > PERF_THRESHOLD_MS the GPU is struggling: reduce render scale
+  // by one step (0.85 → 0.75 → 0.65) until stable or floor is hit.
+  // Brave and budget mobile are already pre-set to 0.75 by detectGpuProfile,
+  // so this mostly catches mid-range desktop GPUs that slip through.
+  const PERF_WINDOW      = 90;   // frames to sample (~1.5s at 60fps)
+  const PERF_THRESHOLD   = 25;   // ms — below ~40fps triggers reduction
+  const PERF_SCALE_STEP  = 0.10; // each reduction drops by 10pp
+  const PERF_SCALE_FLOOR = 0.55; // never go lower than this
+  let perfFrames  = 0;
+  let perfAccum   = 0;
+  let perfLast    = performance.now();
+
   function tick() {
     const dt = Math.min(clock.getDelta(), 0.1);
+
+    // Adaptive perf: accumulate wall-clock frame time (not physics dt).
+    if (perfFrames < PERF_WINDOW) {
+      const now = performance.now();
+      if (perfFrames > 0) perfAccum += now - perfLast; // skip frame 0 (shader compile spike)
+      perfLast = now;
+      perfFrames++;
+      if (perfFrames === PERF_WINDOW) {
+        const avgMs = perfAccum / (PERF_WINDOW - 1);
+        if (avgMs > PERF_THRESHOLD && renderScale > PERF_SCALE_FLOOR) {
+          renderScale = Math.max(PERF_SCALE_FLOOR, renderScale - PERF_SCALE_STEP);
+          applySize();
+          flash(`render scale → ${Math.round(renderScale * 100)}%`);
+          // Re-arm the monitor for one more window to check if it helped.
+          perfFrames = 0;
+          perfAccum  = 0;
+        }
+      }
+    }
 
     if (paused) {
       // Frozen world: don't step physics, don't apply drive forces, keep
