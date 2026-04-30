@@ -164,9 +164,16 @@ function init(kind: VehicleKind) {
 
   const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 800);
 
-  // Postprocessing — bloom, vignette, tone mapping. Replaces renderer.render.
+  // Postprocessing — bloom, SMAA, vignette, tone mapping. Replaces renderer.render.
   // Mobile skips SSAO + DOF for ~2× GPU savings.
-  const postfx = createPostFx(renderer, scene, camera, { mobile });
+  // Render scale: composer renders internally at the scaled resolution; the GPU
+  // bilinear-upscales to the canvas. Mobile at 0.75 = ~44% pixel reduction.
+  const postfx = createPostFx(renderer, scene, camera, {
+    mobile,
+    renderScale: mobile ? 0.75 : 1.0,
+  });
+  // Apply initial size (renderer is already set above; this sizes the composer).
+  postfx.setSize(window.innerWidth, window.innerHeight);
 
   // Lighting — cold dawn.
   const hemi = new THREE.HemisphereLight(0x88928a, 0x2a2a20, 0.32);
