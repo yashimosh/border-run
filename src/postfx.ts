@@ -34,9 +34,22 @@ export interface PostFx {
   render: (dt: number) => void;
 }
 
+export type QualityTier =
+  | "high"    // SSAO + NormalPass + DOF + color grade + bloom + SMAA. Two scene renders.
+  | "medium"  // DOF + color grade + bloom + SMAA. One scene render. Good mid-range default.
+  | "low";    // bloom + SMAA only. Matches mobile path. For weak GPUs or Brave shields.
+
 export interface PostFxOptions {
   /** Mobile quality: skip SSAO + NormalPass + DOF + color-grade, smaller bloom kernel. */
   mobile?: boolean;
+  /**
+   * Quality tier for non-mobile (desktop) path.
+   * - "high"   — full effects inc. SSAO (two scene renders; expensive).
+   * - "medium" — DOF + color grade + bloom, no SSAO (default; one scene render).
+   * - "low"    — bloom + SMAA only; same as mobile path.
+   * Ignored when mobile=true.
+   */
+  quality?: QualityTier;
   /**
    * Render scale factor 0.5–1.0 (default 1.0 = native resolution).
    * The composer renders internally at this fraction of the canvas size;
@@ -51,24 +64,27 @@ export function createPostFx(
   camera: THREE.PerspectiveCamera,
   opts: PostFxOptions = {},
 ): PostFx {
-  const mobile = opts.mobile ?? false;
+  const mobile  = opts.mobile ?? false;
+  const quality = opts.quality ?? "medium";
   const renderScale = Math.max(0.25, Math.min(1.0, opts.renderScale ?? 1.0));
+
+  const makeSetSize = (c: EffectComposer) =>
+    (w: number, h: number) => c.setSize(Math.floor(w * renderScale), Math.floor(h * renderScale));
 
   const composer = new EffectComposer(renderer, {
     frameBufferType: THREE.HalfFloatType,
   });
   composer.addPass(new RenderPass(scene, camera));
 
-  // Shared SMAA instance — same quality preset works for both paths.
   const smaa = new SMAAEffect();
 
-  // ── Desktop path ──────────────────────────────────────────────────────────
-  if (!mobile) {
-    // Normal pass — feeds SSAO.
+  // ── Desktop: high quality — SSAO + NormalPass + DOF + color grade ─────────
+  // NormalPass re-draws the entire scene a second time to get geometry normals
+  // for SSAO. Expensive. Only enable on machines that can afford it.
+  if (!mobile && quality === "high") {
     const normalPass = new NormalPass(scene, camera);
     composer.addPass(normalPass);
 
-    // SSAO — subtle ambient occlusion. Sample count halved for perf (16→8).
     const ssao = new SSAOEffect(camera, normalPass.texture, {
       samples: 8,
       rings: 3,
@@ -82,76 +98,46 @@ export function createPostFx(
       bias: 0.04,
     });
 
-    const bloom = new BloomEffect({
-      intensity: 0.45,
-      luminanceThreshold: 0.78,
-      luminanceSmoothing: 0.22,
-      kernelSize: KernelSize.MEDIUM,
-      mipmapBlur: true,
-    });
-
+    const bloom   = new BloomEffect({ intensity: 0.45, luminanceThreshold: 0.78, luminanceSmoothing: 0.22, kernelSize: KernelSize.MEDIUM, mipmapBlur: true });
     const vignette = new VignetteEffect({ darkness: 0.7, offset: 0.32 });
-
-    const dof = new DepthOfFieldEffect(camera, {
-      focusDistance: 0.02,
-      focalLength: 0.20,
-      bokehScale: 0.6,
-    });
-
-    // Color grading — slight cool shift in shadows, warm in highlights.
-    const hueSat = new HueSaturationEffect({ saturation: 0.12 });
-    const briCon = new BrightnessContrastEffect({ brightness: 0.0, contrast: 0.08 });
-
+    const dof     = new DepthOfFieldEffect(camera, { focusDistance: 0.02, focalLength: 0.20, bokehScale: 0.6 });
+    const hueSat  = new HueSaturationEffect({ saturation: 0.12 });
+    const briCon  = new BrightnessContrastEffect({ brightness: 0.0, contrast: 0.08 });
     const toneMap = new ToneMappingEffect({ mode: ToneMappingMode.AGX });
 
-    // Pass 1 — scene effects: SSAO → DOF → color grade → bloom → vignette → tone.
     composer.addPass(new EffectPass(camera, ssao, dof, hueSat, briCon, bloom, vignette, toneMap));
-    // Pass 2 — SMAA: spatial edge-detect + blend in LDR space, after tone mapping.
     composer.addPass(new EffectPass(camera, smaa));
 
-    return {
-      composer, bloom, vignette, dof, smaa,
-      setSize: (w, h) => {
-        // Canvas stays at w × h (set by renderer.setSize in main.ts).
-        // Composer renders internally at scaled resolution; GPU upscales on blit.
-        composer.setSize(Math.floor(w * renderScale), Math.floor(h * renderScale));
-      },
-      render: (dt) => composer.render(dt),
-    };
+    return { composer, bloom, vignette, dof, smaa, setSize: makeSetSize(composer), render: (dt) => composer.render(dt) };
   }
 
-  // ── Mobile path: bloom + vignette + tone + SMAA ───────────────────────────
-  // Skips SSAO, NormalPass, DOF, HueSat, BriCon — ~2× faster on mobile GPUs.
-  // SMAA is cheap enough to keep: it visibly reduces shimmer on foliage/wires.
-  const bloom = new BloomEffect({
-    intensity: 0.35,
-    luminanceThreshold: 0.82,
-    luminanceSmoothing: 0.18,
-    kernelSize: KernelSize.SMALL,
-    mipmapBlur: true,
-  });
+  // ── Desktop: medium quality — DOF + color grade + bloom, no SSAO ──────────
+  // Single scene render. Drops the NormalPass entirely. Good default for most
+  // desktop GPUs and any browser with shields/throttling (e.g. Brave).
+  if (!mobile && quality === "medium") {
+    const bloom    = new BloomEffect({ intensity: 0.45, luminanceThreshold: 0.78, luminanceSmoothing: 0.22, kernelSize: KernelSize.MEDIUM, mipmapBlur: true });
+    const vignette = new VignetteEffect({ darkness: 0.7, offset: 0.32 });
+    const dof      = new DepthOfFieldEffect(camera, { focusDistance: 0.02, focalLength: 0.20, bokehScale: 0.6 });
+    const hueSat   = new HueSaturationEffect({ saturation: 0.12 });
+    const briCon   = new BrightnessContrastEffect({ brightness: 0.0, contrast: 0.08 });
+    const toneMap  = new ToneMappingEffect({ mode: ToneMappingMode.AGX });
 
+    composer.addPass(new EffectPass(camera, dof, hueSat, briCon, bloom, vignette, toneMap));
+    composer.addPass(new EffectPass(camera, smaa));
+
+    return { composer, bloom, vignette, dof, smaa, setSize: makeSetSize(composer), render: (dt) => composer.render(dt) };
+  }
+
+  // ── Mobile / low quality: bloom + vignette + tone + SMAA ─────────────────
+  // Skips SSAO, NormalPass, DOF, HueSat, BriCon.
+  // Also used for desktop "low" tier (weak GPU, Brave with heavy shields, etc.).
+  const bloom    = new BloomEffect({ intensity: 0.35, luminanceThreshold: 0.82, luminanceSmoothing: 0.18, kernelSize: KernelSize.SMALL, mipmapBlur: true });
   const vignette = new VignetteEffect({ darkness: 0.7, offset: 0.32 });
+  const dof      = new DepthOfFieldEffect(camera, { focusDistance: 0.02, focalLength: 0.20, bokehScale: 0.0 }); // stub
+  const toneMap  = new ToneMappingEffect({ mode: ToneMappingMode.AGX });
 
-  // Stub DOF so the PostFx interface stays consistent (not used in mobile pass).
-  const dof = new DepthOfFieldEffect(camera, {
-    focusDistance: 0.02,
-    focalLength: 0.20,
-    bokehScale: 0.0, // effectively disabled
-  });
-
-  const toneMap = new ToneMappingEffect({ mode: ToneMappingMode.AGX });
-
-  // Pass 1 — scene effects.
   composer.addPass(new EffectPass(camera, bloom, vignette, toneMap));
-  // Pass 2 — SMAA in LDR space.
   composer.addPass(new EffectPass(camera, smaa));
 
-  return {
-    composer, bloom, vignette, dof, smaa,
-    setSize: (w, h) => {
-      composer.setSize(Math.floor(w * renderScale), Math.floor(h * renderScale));
-    },
-    render: (dt) => composer.render(dt),
-  };
+  return { composer, bloom, vignette, dof, smaa, setSize: makeSetSize(composer), render: (dt) => composer.render(dt) };
 }

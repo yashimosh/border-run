@@ -165,11 +165,12 @@ function init(kind: VehicleKind) {
   const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 800);
 
   // Postprocessing — bloom, SMAA, vignette, tone mapping. Replaces renderer.render.
-  // Mobile skips SSAO + DOF for ~2× GPU savings.
-  // Render scale: composer renders internally at the scaled resolution; the GPU
-  // bilinear-upscales to the canvas. Mobile at 0.75 = ~44% pixel reduction.
+  // Desktop default is "medium" (no SSAO/NormalPass). "high" adds SSAO but requires
+  // a second full scene render — only worth it on a dedicated GPU.
+  // Mobile at 0.75 render scale = ~44% pixel reduction; desktop stays at 1.0.
   const postfx = createPostFx(renderer, scene, camera, {
     mobile,
+    quality: "medium",
     renderScale: mobile ? 0.75 : 1.0,
   });
   // Apply initial size (renderer is already set above; this sizes the composer).
