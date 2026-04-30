@@ -31,6 +31,7 @@ import { setupFeedback } from "./feedback";
 import { recordSession, fetchStats, formatStats } from "./analytics";
 import { createDevtools } from "./devtools";
 import { createPostFx, QualityTier } from "./postfx";
+import { mergeMeshGroups } from "./mergeScene";
 import { isMobile, setupTouchControls } from "./touch";
 
 // ── GPU quality + render-scale detection ─────────────────────────────────────
@@ -277,8 +278,8 @@ function init(kind: VehicleKind) {
   // Track helper for landmark placement.
   const trackXLocal = (z: number) => Math.sin(z / TERRAIN_SIZE * 2.4) * 12 + Math.sin(z / TERRAIN_SIZE * 5.7) * 3;
 
-  // Limestone slabs — clusters at landmarks. Big silhouettes.
-  // Approach to canyon (z=-30 area): two large slabs framing the run-in.
+  // Limestone slabs — merged into ~3 draw calls (stone + shadow-stone + rubble).
+  const slabGroups: THREE.Group[] = [];
   for (const [z, side, scale, rot] of [
     [-32, -1, 1.2, 0.2],
     [-28, 1, 0.9, -0.4],
@@ -287,9 +288,8 @@ function init(kind: VehicleKind) {
     const sx = trackXLocal(z) + side * (12 + Math.random() * 3);
     slab.position.set(sx, sampleHeight(sx, z, heights), z);
     slab.rotation.y = rot;
-    scene.add(slab);
+    slabGroups.push(slab);
   }
-  // Border-zone slab cluster — three monocline outcrops north of the line.
   for (const [z, x, scale, rot] of [
     [BORDER_Z + 18, -22, 1.5, 0.6],
     [BORDER_Z + 12, 22, 1.0, -0.3],
@@ -298,12 +298,13 @@ function init(kind: VehicleKind) {
     const slab = buildLimestoneSlab(scale);
     slab.position.set(x, sampleHeight(x, z, heights), z);
     slab.rotation.y = rot;
-    scene.add(slab);
+    slabGroups.push(slab);
   }
+  scene.add(mergeMeshGroups(slabGroups, { castShadow: true, receiveShadow: true }));
 
-  // Persian oak forest — Kurdistan's signature. Each oak is ~5 meshes (trunk +
-  // 3-4 foliage blobs); 600 oaks = 3000 draw calls = real perf cost. Reduced
-  // attempts to 600 (~300 placed) — still reads as forest, half the cost.
+  // Persian oak forest — merged into 2 draw calls (trunk + foliage) regardless
+  // of tree count. Eliminates ~1,500 individual draw calls on the hot path.
+  const oakGroups: THREE.Group[] = [];
   for (let i = 0; i < 600; i++) {
     const ox = (Math.random() - 0.5) * (TERRAIN_SIZE - 30);
     const oz = (Math.random() - 0.5) * (TERRAIN_SIZE - 30);
@@ -314,17 +315,18 @@ function init(kind: VehicleKind) {
     oak.position.set(ox, oy, oz);
     oak.scale.setScalar(0.7 + Math.random() * 0.7);
     oak.rotation.y = Math.random() * Math.PI * 2;
-    scene.add(oak);
+    oakGroups.push(oak);
   }
-  // A pair of single oaks near the wreck — markers.
   for (const [ox, oz] of [[-46, -32], [-38, -36]] as const) {
     const oak = buildPersianOak();
     oak.position.set(ox, sampleHeight(ox, oz, heights), oz);
     oak.scale.setScalar(1.2);
-    scene.add(oak);
+    oakGroups.push(oak);
   }
+  scene.add(mergeMeshGroups(oakGroups, { castShadow: true }));
 
-  // Junipers — dense on the high slopes (z > 50, altitude 4-26m).
+  // Junipers — merged into 2 draw calls (trunk + foliage cones).
+  const juniperGroups: THREE.Group[] = [];
   for (let i = 0; i < 180; i++) {
     const jx = (Math.random() - 0.5) * (TERRAIN_SIZE - 30);
     const jz = 50 + Math.random() * (TERRAIN_SIZE / 2 - 60);
@@ -335,10 +337,12 @@ function init(kind: VehicleKind) {
     tree.position.set(jx, jy, jz);
     tree.scale.setScalar(0.7 + Math.random() * 0.6);
     tree.rotation.y = Math.random() * Math.PI * 2;
-    scene.add(tree);
+    juniperGroups.push(tree);
   }
+  scene.add(mergeMeshGroups(juniperGroups, { castShadow: true }));
 
-  // Wild bushes — much denser to fill the forest understory.
+  // Wild bushes — merged into 1 draw call (single foliage material).
+  const bushGroups: THREE.Group[] = [];
   for (let i = 0; i < 280; i++) {
     const bx = (Math.random() - 0.5) * (TERRAIN_SIZE - 20);
     const bz = (Math.random() - 0.5) * (TERRAIN_SIZE - 20);
@@ -349,8 +353,9 @@ function init(kind: VehicleKind) {
     bush.position.set(bx, by, bz);
     bush.scale.setScalar(0.6 + Math.random() * 0.7);
     bush.rotation.y = Math.random() * Math.PI * 2;
-    scene.add(bush);
+    bushGroups.push(bush);
   }
+  scene.add(mergeMeshGroups(bushGroups, { castShadow: false }));
 
   // Dry-stone wall ruin — running along the south slope below the oak grove.
   const wall = buildStoneWall(18);
@@ -447,14 +452,17 @@ function init(kind: VehicleKind) {
     const zNorm = z / TERRAIN_SIZE;
     return Math.sin(zNorm * 2.4) * 12 + Math.sin(zNorm * 5.7) * 3;
   };
+  // Cairns — merged (stone material shared with slabs, but different Group).
+  const cairnGroups: THREE.Group[] = [];
   for (const z of [-90, -50, -10, 25, 70]) {
     const cairn = buildCairn();
     const sideOffset = (Math.random() < 0.5 ? -1 : 1) * (5 + Math.random() * 2);
     const cx = trackXAt(z) + sideOffset;
     cairn.position.set(cx, sampleHeight(cx, z, heights), z);
     cairn.rotation.y = Math.random() * Math.PI;
-    scene.add(cairn);
+    cairnGroups.push(cairn);
   }
+  scene.add(mergeMeshGroups(cairnGroups, { castShadow: true }));
 
   // Wrecked truck off the road — a previous run that didn't make it. South side.
   const wreck = buildWreck();
@@ -464,7 +472,8 @@ function init(kind: VehicleKind) {
   wreck.rotation.y = -0.7;
   scene.add(wreck);
 
-  // Cypresses near the hut — clustered, the way they actually grow.
+  // Cypresses — merged into 2 draw calls (trunk + foliage).
+  const cypressGroups: THREE.Group[] = [];
   const hutCenter = { x: -28, z: -10 };
   for (let i = 0; i < 7; i++) {
     const tree = buildCypress();
@@ -474,17 +483,17 @@ function init(kind: VehicleKind) {
     const tz = hutCenter.z + Math.sin(a) * r;
     tree.position.set(tx, sampleHeight(tx, tz, heights), tz);
     tree.scale.setScalar(0.8 + Math.random() * 0.5);
-    scene.add(tree);
+    cypressGroups.push(tree);
   }
-  // Two more cypresses near the wreck — they grow where there's water.
   for (let i = 0; i < 2; i++) {
     const tree = buildCypress();
     const tx = wreckX + (Math.random() - 0.5) * 4;
     const tz = wreckZ - 6 + Math.random() * 3;
     tree.position.set(tx, sampleHeight(tx, tz, heights), tz);
     tree.scale.setScalar(0.7 + Math.random() * 0.4);
-    scene.add(tree);
+    cypressGroups.push(tree);
   }
+  scene.add(mergeMeshGroups(cypressGroups, { castShadow: true }));
 
   // Memorial flag poles near the border — Kurdish/Iranian custom for marking
   // places where things happened. Three different cloth colors. Quiet detail.
