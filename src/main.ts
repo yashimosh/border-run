@@ -147,7 +147,7 @@ function init(kind: VehicleKind) {
   renderer.setSize(window.innerWidth, window.innerHeight);
   renderer.setClearColor(0x0b0b0c);
   renderer.shadowMap.enabled = true;
-  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  // Shadow type set below after gpuProfile is resolved.
   renderer.toneMapping = THREE.NoToneMapping; // postfx ToneMappingEffect handles this
   stage.appendChild(renderer.domElement);
 
@@ -195,6 +195,11 @@ function init(kind: VehicleKind) {
   const gpuProfile = detectGpuProfile();
   let renderScale  = gpuProfile.renderScale;
 
+  // PCFSoft is ~2× the cost of PCF per shadow fragment — only worth it on high.
+  renderer.shadowMap.type = gpuProfile.quality === "high"
+    ? THREE.PCFSoftShadowMap
+    : THREE.PCFShadowMap;
+
   const postfx = createPostFx(renderer, scene, camera, {
     mobile,
     quality: gpuProfile.quality,
@@ -216,13 +221,19 @@ function init(kind: VehicleKind) {
   const sun = new THREE.DirectionalLight(0xffd9a8, 1.6);
   sun.position.copy(sunPosition).multiplyScalar(150);
   sun.castShadow = true;
-  sun.shadow.mapSize.set(mobile ? 1024 : 2048, mobile ? 1024 : 2048);
-  sun.shadow.camera.left = -180; sun.shadow.camera.right = 180;
-  sun.shadow.camera.top = 180; sun.shadow.camera.bottom = -180;
+  // Shadow map size tied to quality tier. PCFSoft is ~2× the cost of PCF per fragment.
+  const shadowMapSize = gpuProfile.quality === "high" ? 2048 : 1024;
+  sun.shadow.mapSize.set(shadowMapSize, shadowMapSize);
+  // Frustum at ±80 around origin; in tick() it follows the truck.
+  // ±80 covers all visible shadow area without wasting the budget on far terrain.
+  sun.shadow.camera.left = -80; sun.shadow.camera.right = 80;
+  sun.shadow.camera.top  =  80; sun.shadow.camera.bottom = -80;
   sun.shadow.camera.near = 1; sun.shadow.camera.far = 400;
-  sun.shadow.bias = -0.0003;
-  sun.shadow.normalBias = 0.02;
-  sun.shadow.radius = 3;
+  sun.shadow.bias        = -0.0003;
+  sun.shadow.normalBias  = 0.02;
+  sun.shadow.radius      = 3;
+  // Add to scene so sun.target.position updates take effect in tick().
+  scene.add(sun.target);
   scene.add(sun);
 
   // Physics world.
@@ -674,6 +685,9 @@ function init(kind: VehicleKind) {
   if (hudVehicle) hudVehicle.textContent = `${spec.name} — ${spec.year}`;
   hudLoad.textContent = `${spec.cargoSlots.length}/${spec.cargoSlots.length}`;
   const eventEl = document.getElementById("event")!;
+  // Cached frequently-queried HUD elements — avoid getElementById in the hot tick path.
+  const boostBarEl   = document.getElementById("hud-boost-bar");
+  const boostLabelEl = document.getElementById("hud-boost-label");
   let crossed = false;
   let eventTimeout: number | undefined;
   function flash(text: string) {
@@ -800,6 +814,16 @@ function init(kind: VehicleKind) {
   let perfAccum   = 0;
   let perfLast    = performance.now();
 
+  // ── Preallocated per-frame temporaries ────────────────────────────────────
+  // Avoids triggering GC on every animation frame.
+  const _cWarm   = new THREE.Color(0xffd9a8);
+  const _cNoon   = new THREE.Color(0xfff0d8);
+  const _cNight  = new THREE.Color(0x4a5266);
+  const _v3Cam   = new THREE.Vector3();
+  const _v3Up    = new THREE.Vector3(0, 1.5, 0);
+  const _cnFw    = new CANNON.Vec3(0, 0, 1); // chassis local +Z (never mutated)
+  const _cnFwW   = new CANNON.Vec3();         // chassis world forward (updated each frame)
+
   function tick() {
     const dt = Math.min(clock.getDelta(), 0.1);
 
@@ -838,6 +862,11 @@ function init(kind: VehicleKind) {
     applyDriveInput(dt, vehicle);
     world.step(fixedStep, dt, 3);
     syncVehicleMeshes(vehicle);
+
+    // Keep shadow map frustum centered on the truck. This concentrates shadow
+    // resolution on the visible area instead of the whole terrain.
+    sun.target.position.copy(vehicle.chassisMesh.position);
+    sun.target.updateMatrixWorld();
 
     // Brake lights — emissive intensity follows brake input.
     const braking = keys.brake || keys.handbrake || (keys.back && Math.hypot(vehicle.chassisBody.velocity.x, vehicle.chassisBody.velocity.z) > 0.5);
@@ -977,12 +1006,9 @@ function init(kind: VehicleKind) {
     const dayness = Math.max(0, sunY);
     sun.intensity = dayness * 1.6 + 0.05;
     // Warm sunrise / sunset, cool blue night.
-    const warm = new THREE.Color(0xffd9a8);
-    const noon = new THREE.Color(0xfff0d8);
-    const night = new THREE.Color(0x4a5266);
-    if (dayness > 0.4) sun.color.copy(noon);
-    else if (sunY > 0)  sun.color.copy(warm);
-    else                sun.color.copy(night);
+    if (dayness > 0.4) sun.color.copy(_cNoon);
+    else if (sunY > 0) sun.color.copy(_cWarm);
+    else               sun.color.copy(_cNight);
     hemi.intensity = 0.25 + dayness * 0.5;
 
     // Camera: drive-mode chase cam OR photo-mode orbit.
@@ -1002,9 +1028,9 @@ function init(kind: VehicleKind) {
     }
 
     // Camera follow.
-    const desired = vehicle.chassisMesh.localToWorld(camOffsetLocal.clone());
-    camera.position.lerp(desired, 1 - Math.pow(0.001, dt));
-    camTarget.copy(vehicle.chassisMesh.position).add(new THREE.Vector3(0, 1.5, 0));
+    vehicle.chassisMesh.localToWorld(_v3Cam.copy(camOffsetLocal));
+    camera.position.lerp(_v3Cam, 1 - Math.pow(0.001, dt));
+    camTarget.copy(vehicle.chassisMesh.position).add(_v3Up);
 
     // Speed-based FOV: pulls back as you gain speed for the rush.
     // Suppressed until the intro tween finishes so they don't fight.
@@ -1029,28 +1055,22 @@ function init(kind: VehicleKind) {
     hudSpeed.textContent = String(speedKmh);
 
     // Heading: world forward derived from chassis quaternion (local +z).
-    const fw = new CANNON.Vec3(0, 0, 1);
-    const fwWorld = new CANNON.Vec3();
-    vehicle.chassisBody.quaternion.vmult(fw, fwWorld);
-    const headingDeg = Math.round((Math.atan2(fwWorld.x, fwWorld.z) * 180) / Math.PI);
+    vehicle.chassisBody.quaternion.vmult(_cnFw, _cnFwW);
+    const headingDeg = Math.round((Math.atan2(_cnFwW.x, _cnFwW.z) * 180) / Math.PI);
     hudHeading.textContent = `${headingDeg}°`;
 
     // Boost charge management.
     boostActive = keys.boost && keys.fwd && boostCharge > 0;
     if (boostActive) boostCharge = Math.max(0, boostCharge - dt / 2.5);   // 2.5s of full boost
     else             boostCharge = Math.min(1, boostCharge + dt / 8);     // 8s full recharge
-    const boostBar = document.getElementById("hud-boost-bar");
-    if (boostBar) boostBar.style.width = `${Math.round(boostCharge * 100)}%`;
-    const boostLabel = document.getElementById("hud-boost-label");
-    if (boostLabel) boostLabel.textContent = boostActive ? "boosting" : (boostCharge >= 1 ? "boost ready" : "boost charging");
+    if (boostBarEl)   boostBarEl.style.width   = `${Math.round(boostCharge * 100)}%`;
+    if (boostLabelEl) boostLabelEl.textContent = boostActive ? "boosting" : (boostCharge >= 1 ? "boost ready" : "boost charging");
 
     // Drift detection: lateral velocity vs forward velocity ratio.
-    const fwLocal = new CANNON.Vec3(0, 0, 1);
-    const fwWorldVec = new CANNON.Vec3();
-    vehicle.chassisBody.quaternion.vmult(fwLocal, fwWorldVec);
+    // Reuse _cnFwW already computed above for heading — same world-forward vector.
     const vWorld = vehicle.chassisBody.velocity;
-    const forwardComp = vWorld.x * fwWorldVec.x + vWorld.z * fwWorldVec.z;
-    const lateralComp = Math.hypot(vWorld.x - fwWorldVec.x * forwardComp, vWorld.z - fwWorldVec.z * forwardComp);
+    const forwardComp = vWorld.x * _cnFwW.x + vWorld.z * _cnFwW.z;
+    const lateralComp = Math.hypot(vWorld.x - _cnFwW.x * forwardComp, vWorld.z - _cnFwW.z * forwardComp);
     const drifting = planarSpeed > 6 && lateralComp / planarSpeed > 0.45;
     document.getElementById("hud-drift")?.classList.toggle("show", drifting);
 
