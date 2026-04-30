@@ -32,6 +32,7 @@ import { recordSession, fetchStats, formatStats } from "./analytics";
 import { createDevtools } from "./devtools";
 import { createPostFx, QualityTier } from "./postfx";
 import { mergeMeshGroups } from "./mergeScene";
+import { Story } from "./story";
 import { isMobile, setupTouchControls } from "./touch";
 
 // ── GPU quality + render-scale detection ─────────────────────────────────────
@@ -699,12 +700,20 @@ function init(kind: VehicleKind) {
   const boostLabelEl = document.getElementById("hud-boost-label");
   let crossed = false;
   let eventTimeout: number | undefined;
-  function flash(text: string) {
+  function flash(text: string, ms = 2400) {
     eventEl.textContent = text;
     eventEl.classList.add("show");
     clearTimeout(eventTimeout);
-    eventTimeout = window.setTimeout(() => eventEl.classList.remove("show"), 2400);
+    eventTimeout = window.setTimeout(() => eventEl.classList.remove("show"), ms);
   }
+
+  // Story system — intro card → mid-run beats → ending card.
+  // Story beats are full sentences; show them longer than gameplay flashes.
+  const story = new Story((text) => flash(text, 4500));
+  // Block driving input while the intro card is up. Engine still idles, world
+  // renders normally underneath the overlay so the dawn establishes itself.
+  let storyBlocking = true;
+  story.showIntro().then(() => { storyBlocking = false; });
 
   // Resize — applySize handles canvas, composer, and camera aspect together.
   window.addEventListener("resize", () => applySize());
@@ -855,12 +864,10 @@ function init(kind: VehicleKind) {
       }
     }
 
-    if (paused) {
-      // Frozen world: don't step physics, don't apply drive forces, keep
-      // meshes in their current positions, feed zero to audio so the engine
-      // settles and wind/tire fade out.
+    // Story-blocking and post-ending also freeze input, same as paused:
+    // engine idles, world renders, story card sits on top.
+    if (paused || storyBlocking || story.isEnded()) {
       audio.update(dt, 0, 0, true);
-      // Still render so the scene stays visible behind the modal/overlay.
       dev.begin();
       postfx.render(dt);
       dev.end();
@@ -1083,13 +1090,23 @@ function init(kind: VehicleKind) {
     const drifting = planarSpeed > 6 && lateralComp / planarSpeed > 0.45;
     document.getElementById("hud-drift")?.classList.toggle("show", drifting);
 
-    // Border crossing.
-    if (!crossed && vehicle.chassisBody.position.z >= BORDER_Z) {
+    // Border crossing — feeds the story system, which fires the ending card
+    // a few seconds later (giving the player time in the destination zone).
+    const justCrossedBorder = !crossed && vehicle.chassisBody.position.z >= BORDER_Z;
+    if (justCrossedBorder) {
       crossed = true;
-      flash("crossed");
     } else if (crossed && vehicle.chassisBody.position.z < BORDER_Z - 3) {
       crossed = false;
     }
+
+    // Story update — fires position-triggered beats, manages ending sequencing.
+    story.update(
+      vehicle.chassisBody.position.z,
+      crossed,
+      performance.now() / 1000,
+      cargoStatus.secured,
+      cargoStatus.total,
+    );
 
     // Bounds: if you somehow exit the map, reset.
     if (Math.abs(vehicle.chassisBody.position.x) > TERRAIN_SIZE / 2 + 5 ||

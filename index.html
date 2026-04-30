@@ -52,9 +52,41 @@
         position: fixed; left: 50%; top: 32px; transform: translateX(-50%);
         padding: 8px 14px; border: 1px solid rgba(232,230,225,0.25);
         font-size: 12px; letter-spacing: 0.05em; opacity: 0;
+        max-width: 460px; text-align: center; line-height: 1.5;
         transition: opacity 300ms ease;
       }
       #event.show { opacity: 1; }
+
+      /* Story card — full-screen narrative overlay for intro/ending. */
+      #story-card {
+        position: fixed; inset: 0;
+        background: rgba(11,11,12,0.94);
+        display: flex; align-items: center; justify-content: center;
+        opacity: 0; pointer-events: none;
+        transition: opacity 700ms ease;
+        z-index: 500;
+      }
+      #story-card.show { opacity: 1; pointer-events: auto; }
+      #story-card-inner {
+        max-width: 540px; padding: 0 32px;
+        display: flex; flex-direction: column; gap: 28px;
+      }
+      #story-card-text p {
+        font-size: 14px; line-height: 1.7; opacity: 0.92;
+        margin-bottom: 14px; letter-spacing: 0.01em;
+      }
+      #story-card-text p.dateline {
+        font-size: 11px; opacity: 0.5; letter-spacing: 0.18em;
+        margin-bottom: 24px; font-weight: 500;
+      }
+      #story-card-action {
+        align-self: flex-start;
+        font: inherit; background: transparent; color: inherit;
+        border: 1px solid rgba(232,230,225,0.3); padding: 10px 22px; cursor: pointer;
+        letter-spacing: 0.08em; text-transform: uppercase; font-size: 11px;
+        transition: border-color 200ms, background 200ms;
+      }
+      #story-card-action:hover { border-color: #e8e6e1; background: rgba(232,230,225,0.04); }
 
       .colophon { position: fixed; bottom: 12px; right: 14px; font-size: 10px; opacity: 0.4; }
       body.photo-mode .hud, body.photo-mode .colophon, body.photo-mode #event { opacity: 0 !important; pointer-events: none; transition: opacity 300ms; }
@@ -269,6 +301,14 @@
     </div>
 
     <div id="event">— crossing —</div>
+
+    <!-- Narrative overlay — intro card before drive starts, ending card after border crossing. -->
+    <div id="story-card">
+      <div id="story-card-inner">
+        <div id="story-card-text"></div>
+        <button id="story-card-action" type="button">drive</button>
+      </div>
+    </div>
 
     <div class="colophon">
       slice v0.4 · <button type="button" data-fb-open>send feedback</button> · esc pauses
