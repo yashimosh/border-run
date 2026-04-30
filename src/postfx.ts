@@ -71,8 +71,13 @@ export function createPostFx(
   const makeSetSize = (c: EffectComposer) =>
     (w: number, h: number) => c.setSize(Math.floor(w), Math.floor(h));
 
+  // HalfFloat gives true HDR intermediate buffers (better bloom on desktop).
+  // On mobile, the EXT_color_buffer_half_float path can be significantly slower
+  // on Chrome/Brave Android vs Samsung Internet due to GPU sandbox overhead.
+  // UnsignedByte is universally fast; bloom is computed from LDR values but the
+  // visual difference on a phone screen is not perceptible.
   const composer = new EffectComposer(renderer, {
-    frameBufferType: THREE.HalfFloatType,
+    frameBufferType: mobile ? THREE.UnsignedByteType : THREE.HalfFloatType,
   });
   composer.addPass(new RenderPass(scene, camera));
 
